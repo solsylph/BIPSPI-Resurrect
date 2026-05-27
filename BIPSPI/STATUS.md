@@ -1,14 +1,33 @@
 # BIPSPI Python 3 Port — Status & Cluster Handoff
 
 **Upstream:** [rsanchezgarc/BIPSPI](https://github.com/rsanchezgarc/BIPSPI) (Python 2.7)
-**Fork purpose:** sequence-mode resurrection on the ESMFold-multimer mmseqs2-clustered splits, as a non-RF baseline after the RF-on-ESM2 architectural ceiling was confirmed (pair-AUROC ~0.55 on test).
-**Last update:** 2026-05-27.
+**Our fork:** [solsylph/BIPSPI-Resurrect](https://github.com/solsylph/BIPSPI-Resurrect)
+**Purpose:** sequence-mode resurrection on the ESMFold-multimer mmseqs2-clustered splits, as a non-RF baseline after the RF-on-ESM2 architectural ceiling was confirmed (pair-AUROC ~0.55 on test).
+**Last update:** 2026-05-27 (after Phase C complete, Phase D in progress).
 
-## What's been done
+> **Repo layout note:** the GitHub repo has `BIPSPI/` as a subdirectory at its root (the local git repo was reinitialised at `E:\BIPSPI-Resurrect\` instead of `E:\BIPSPI-Resurrect\BIPSPI\`). On the cluster the code lives at `~/BIPSPI-Resurrect/BIPSPI/`. All commands below assume `cd ~/BIPSPI-Resurrect/BIPSPI` first.
 
-### 1. Mechanical Python 2 -> 3 port (complete)
+---
 
-21 files edited under `git diff HEAD` (+83/-63 lines). Translations:
+## Progress at a glance
+
+| Phase | Subject | Status |
+|---|---|---|
+| Port | Py2.7 → Py3 mechanical port (21 files, +83/-63 lines) | ✅ |
+| Critic | Two P0 regressions found + fixed (P0-1 alignment truncation, P0-2 empty-input crash) | ✅ |
+| A | Extend `protein` conda env + module-load BLAST+/CD-HIT | ✅ |
+| B | Build al2co + install clustalw 2.1 (via bioconda) | ✅ |
+| Cfg patch | Update `dependencies.cfg` with cluster paths | ✅ |
+| C | Port SPIDER2 to Py3.10 (numpy-only, option a-i) | ✅ |
+| D | Download uniref90 + makeblastdb | ⏳ in progress (~3-4 hr ETA) |
+| Smoke | BIPSPI training on 5-10 complexes (Gate 3) | blocked on D |
+| Full | BIPSPI re-baseline on full test split (Gate 4) | blocked on smoke |
+
+---
+
+## 1. Mechanical Python 2 → 3 port (complete)
+
+21 files edited under `git diff HEAD` (+83/-63 lines) against the upstream Py2.7 clone. Translations:
 
 | Hazard | Files | Replacement |
 |---|---|---|
@@ -23,69 +42,134 @@
 
 `python -m compileall .` passes for 122 of 123 files.  The 1 failure (`monitorScreenlog.py` line 28) is a **pre-existing source bug** that broke in Python 2.7 too — out of scope.
 
-### 2. Critic/implementor pair-programming round (complete)
+## 2. Critic/implementor pair-programming round (complete)
 
 After the mechanical port, a critic review found two correctness regressions introduced by the port:
 
-- **P0-1 (silent wrong residue mappings):** `PairwiseAligner` in local mode returns the aligned strings TRUNCATED to the local match region; `pairwise2.align.localds` returned the full input sequences with `-` padding outside the match. Downstream code in all four alignment sites walks the strings with `idx += 1` on non-gap and indexes back into the original polypeptide — truncation shifted those indices by the leading-context offset.
-- **P0-2 (crash on empty polypeptides):** `aligner.align("", X)` raises `ValueError`; `pairwise2.align.localds("", X)` returned `[]`. `homoOligomerFixer._alignSeqs` had an upstream `if len(alignments)==0: continue` guard that no longer fires.
+- **P0-1 (silent wrong residue mappings):** `PairwiseAligner` in local mode returns the aligned strings TRUNCATED to the local match region; `pairwise2.align.localds` returned the full input sequences with `-` padding outside the match. Downstream code walks the strings with `idx += 1` and indexes into the original polypeptide — truncation shifted those indices by the leading-context offset.
+- **P0-2 (crash on empty polypeptides):** `aligner.align("", X)` raises `ValueError`; `pairwise2.align.localds("", X)` returned `[]`. `homoOligomerFixer._alignSeqs` had a `if len(alignments)==0: continue` guard that no longer fired.
 
-Both fixed by an implementor pass:
-- Each of the 4 alignment files (`computeFeatures/common/boundUnboundMapper.py`, `computeFeatures/common/homoOligomerFixer.py`, `pythonTools/alignSequences.py`, `computeFeatures/seqStep/seqToolManagers/seqExtraction/seqAligner.py`) gained a module-level `_padded_local_alignment(seq1, seq2, alignment)` helper that reconstructs full-length pairwise2-shaped padded strings from `alignment.aligned` block spans.
+Both fixed:
+- All 4 alignment files (`computeFeatures/common/boundUnboundMapper.py`, `computeFeatures/common/homoOligomerFixer.py`, `pythonTools/alignSequences.py`, `computeFeatures/seqStep/seqToolManagers/seqExtraction/seqAligner.py`) gained a module-level `_padded_local_alignment(seq1, seq2, alignment)` helper that reconstructs full-length pairwise2-shaped padded strings from `alignment.aligned` block spans.
 - `homoOligomerFixer._alignSeqs` gained `if not seq0 or not seq1: return []` at the top.
 
 Byte-for-byte sanity check against legacy pairwise2 on `s1="PPPACDEFGHIKLMNQQQ", s2="ACDEFKLMN"` matched: `'PPPACDEFGHIKLMNQQQ'` / `'---ACDEF---KLMN---'`.
 
-### 3. Cluster transfer scaffold (complete)
+---
 
-New files under this fork:
-- `bipspi_py3_environ.yml` — Python 3.11 conda env spec (biopython >=1.81, pandas >=2.0, xgboost 1.x, gemmi, etc.).
-- `tools/prepare_bipspi_inputs.py` — adapter: reads the ESMFold pipeline's `data/splits/{train,val,test}.json` + `data/structures/{PDB}_assembly1.cif`, writes BIPSPI's expected `{PREFIX}_l_b.pdb` / `{PREFIX}_r_b.pdb` per complex (plus `_u` symlinks), a single-fold `folds.json` for `--N_KFOLD <foldsFile>`, and a manifest.
-- `tools/check_cluster_deps.sh` — bash probe to run on the haskell cluster login node to verify psiblast, BLAST DB, al2co, clustalw, cd-hit, SPIDER2, conda are present.
-- `STATUS.md` — this file.
+## 3. Phase A — env + module loads (complete)
 
-## What's pending
+**Cluster Python env**: `protein` (existing conda env at `~/miniforge3/envs/protein`).
 
-### 4. Cluster dependency probe (Gate 2)
+**Confirmed Python version: 3.10.20**.
 
-**Not done — needs to be run on haskell.** Run:
-```bash
-ssh biostruct01@10.205.10.23   # via VPN-in-WSL
-cd ~/BIPSPI-py3                # after you've pushed/scp'd the fork
-bash tools/check_cluster_deps.sh > /tmp/bipspi_deps.txt 2>&1
-cat /tmp/bipspi_deps.txt
+**Packages installed into `protein`:**
 ```
-Paste the output back. Sequence-mode BIPSPI requires ALL of:
-- `psiblast` (NCBI BLAST+) + a compiled uniref90 BLAST DB (~60-80 GB)
-- `al2co`, `clustalw`, `cd-hit` (al2co's dependencies)
-- `SPIDER2` (Python 2.7 — may need its own port, or run inside a Py2 conda env subprocess)
-- `conda` / `mamba` to install the Py3 env
+conda install -n protein -c conda-forge -c bioconda \
+    xgboost gemmi tqdm requests mmtf-python psutil joblib -y
+```
+Currently installed (verified):
+- xgboost **3.2.0** — see caveat below
+- biopython 1.86
+- pandas 2.3.3
+- gemmi, tqdm, requests, mmtf-python, psutil, joblib (all current)
 
-If any are missing, that becomes a build-from-source or shim subtask before training can start.
+> **xgboost 3.2.0 caveat**: BIPSPI's `trainAndTest/classifiers/xgBoost.py` was written against xgboost 0.80 (2017). xgboost 3.x has substantial API changes (early stopping moved, callbacks restructured, `use_label_encoder` removed). **This will almost certainly break at BIPSPI training time.** Per "fix later" scope it's left as-is. Either pre-empt with `conda install -n protein "xgboost>=1.7,<2.0" -y`, or patch `xgBoost.py` when it errors.
 
-### 5. Cluster Py3 env install
-
-After deps pass:
+**Module loads** (must repeat in any fresh shell):
 ```bash
-mamba env create -f bipspi_py3_environ.yml      # or conda
-conda activate bipspi-py3
-# Smoke-import:
-python -c "from Bio.Align import PairwiseAligner, substitution_matrices; print('biopython ok')"
-python -c "import xgboost as xgb; print('xgboost', xgb.__version__)"
-python -c "import gemmi; print('gemmi', gemmi.__version__)"
+conda activate protein
+module load BLAST+/2.14.1-gompi-2023a
+module load CD-HIT/4.8.1-GCC-12.2.0
+```
+Resolved paths:
+- `psiblast`, `makeblastdb` → `/cvmfs/.../BLAST+/2.14.1-gompi-2023a/bin/`
+- `cd-hit` → `/cvmfs/.../CD-HIT/4.8.1-GCC-12.2.0/bin/`
+
+Add the three lines to `~/.bashrc` if you want them permanent.
+
+> Loading CD-HIT downgrades GCC 12.3 → 12.2 in the shell environment. Harmless for our purposes.
+
+## 4. Phase B — al2co + clustalw (complete)
+
+Built/installed via `tools/install_al2co_clustalw.sh`:
+- **clustalw** via bioconda → version **2.1** at `~/miniforge3/envs/protein/bin/clustalw`. BIPSPI docs spec'd 1.83 but the CLI is backward-compatible — al2co only uses standard MSA invocation.
+- **al2co** built from [TheApacheCats/al2co GitHub mirror](https://github.com/TheApacheCats/al2co) (the original swmed FTP is dead). Single C file with the `char[500]` → `char[1024]` buffer patch from BIPSPI docs, compiled with `gcc al2co.c -o al2co -lm`. Build emits K&R-era warnings (implicit `int`, fgets-into-fstr buffer overflow on a pre-existing bug) — all harmless. Smoke test produced expected usage text.
+
+Output binary paths:
+- `~/tools/al2co/al2co`
+- `~/miniforge3/envs/protein/bin/clustalw`
+
+## 5. Phase B.5 — `dependencies.cfg` patcher (complete)
+
+`tools/patch_dependencies_cfg.sh` rewrote `configFiles/cmdTool/dependencies.cfg` with the cluster-specific paths above. Backup left at `dependencies.cfg.bak.<timestamp>`.
+
+Final values (live on cluster):
+```
+psiBlastBin       /cvmfs/.../BLAST+/2.14.1-gompi-2023a/bin/psiblast
+psiBlastDB_path   /home/biostruct01/databases/uniref90/uniref90.fasta   # populated by Phase D
+cdHitBin_path     /cvmfs/.../CD-HIT/4.8.1-GCC-12.2.0/bin/cd-hit
+clustalW_path     /home/biostruct01/miniforge3/envs/protein/bin/clustalw
+al2coBin_path     /home/biostruct01/tools/al2co/al2co
+spider2PyScript_path /home/biostruct01/tools/SPIDER2/misc/pred_pssm.py
 ```
 
-### 6. Smoke test on 5-10 complexes (Gate 3)
+## 6. Phase C — SPIDER2 port (complete)
+
+**Decision taken: option a-i** (numpy-only rewrite of forward pass).
+
+SPIDER2 source: `SPIDER2_local.tgz` (105 MB, 2017 vintage) from the Zhou lab successor site (`http://183.36.5.251:8080/sparks_downloads/.../old_versions/SPIDER2_local.tgz` — the original Sparks Lab URL is dead). Extracted to `~/tools/SPIDER2/`.
+
+**Key discovery**: `pred_pssm.py` is **already pure numpy** — no Theano dependency. The "NN" is matrix multiplies + sigmoid, weights load via `numpy.load()` on the bundled `.npz` files. Three iterations refine SS/ASA/TTPP predictions.
+
+Three Py2 → Py3 edits applied by `tools/port_spider2.sh`:
+1. **3× `print >>fp, X` → `print(X, file=fp)`** (Py2 redirect-print syntax)
+2. **`numpy.load(f)` → `numpy.load(f, allow_pickle=True, encoding='latin1')`** — numpy ≥1.16.3 changed default to `allow_pickle=False` (security); Py2-pickled `.npz` also needs `encoding='latin1'` to decode bytes strings safely
+
+**Validation:** smoke test against bundled `SPIDER2/ex/1a1xA.pssm` produced `1a1xA.spd3` that **byte-matches** the reference `1a1xA_CHECK.spd3` on the first 5 lines (`diff` returned empty). Numerical fidelity confirmed.
+
+One non-fatal `DeprecationWarning: Conversion of an array with ndim > 0 to a scalar` (numpy 1.25) when formatting `pred_asa_1[ind]` via `%5.1f`. Will error under numpy 2.x; we're pinned at numpy <2.0 so safe. Fix is `.item()` insertion when needed.
+
+Files we did NOT touch in SPIDER2 (not on BIPSPI's critical path): `splitseq.py` (has its own Py2 bugs), `pred_nopssm.py`, `pred_pssm0.py`, `seq2pssm.py`.
+
+## 7. Phase D — uniref90 BLAST DB (in progress)
+
+Running in `tmux session "uniref90"` on haskell node, inside `srun --pty bash` shell. Script: `tools/download_uniref90_db.sh`. Target dir: `~/databases/uniref90/`.
+
+Steps + realistic timing:
+- `wget uniref90.fasta.gz` from UniProt FTP — **44 GB compressed** (larger than initially estimated; UniRef90 grew), ~60-90 min at ~11 MB/s
+- `gunzip` → ~130 GB uncompressed FASTA, ~30 min
+- `makeblastdb -dbtype prot -hash_index -parse_seqids` → ~60-90 min
+
+Total: **~3-4 hours**. Disk: ~130 GB of 17 TB free — no constraint.
+
+When complete, `dependencies.cfg` `psiBlastDB_path` already points at `~/databases/uniref90/uniref90.fasta`. Verify with:
+```bash
+echo -e ">test\nMKQHKAMIVALIVICITAVVAALVTRKDLCEVHIRTGQTEVAVF" > /tmp/test.fa
+psiblast -query /tmp/test.fa -db ~/databases/uniref90/uniref90.fasta -num_iterations 1 -num_threads 4 -out /tmp/test.psiblast
+head -30 /tmp/test.psiblast
+```
+
+---
+
+## 8. What remains (blocked on Phase D)
+
+### Smoke test on 5-10 complexes (Gate 3)
 
 ```bash
-# Run the adapter against a small slice of the existing splits:
+cd ~/BIPSPI-Resurrect/BIPSPI
+conda activate protein
+module load BLAST+/2.14.1-gompi-2023a CD-HIT/4.8.1-GCC-12.2.0
+
+# Adapter: produce BIPSPI-format pdbsIndir from existing ESMFold splits
 python tools/prepare_bipspi_inputs.py \
     --splits-dir ~/ESMFold-multimer/data/splits \
     --structures-dir ~/ESMFold-multimer/data/structures \
     --output-dir ~/bipspi_run/smoke \
     --evaluate test \
     --limit 5
-# Then launch a tiny BIPSPI training run:
+
+# Smoke training run
 python generateBIPSPIModel.py \
     --modelType seq \
     --pdbsIndir ~/bipspi_run/smoke/pdbs \
@@ -93,91 +177,87 @@ python generateBIPSPIModel.py \
     --N_KFOLD ~/bipspi_run/smoke/folds.json \
     --ncpu 4
 ```
-Inspect logs for: psiblast launching against uniref90, al2co running per chain, codification producing non-empty joblib pickles, xgboost training producing a model.pkl, results emitted as `prefix.tab.res.gz`.
 
-If smoke test passes -> drop `--limit` and the full-data run is just compute time.
+Watch for: psiblast queries against uniref90, al2co/SPIDER2 running per chain, xgboost training, `prefix.tab.res.gz` output files. **Most likely failure point: xgboost API incompatibility** (BIPSPI's xgBoost.py vs xgboost 3.x) — fix in place when it errors.
 
-### 7. Full re-baseline (Gate 4)
+### Full re-baseline (Gate 4)
 
-```bash
-# tmux on the login node, srun --pty inside (sbatch is blocked for regular users on haskell):
-tmux new -s bipspi
-srun --partition=cpu --cpus-per-task=16 --mem=64G --time=2-00:00:00 --pty bash -l
-conda activate bipspi-py3
-cd ~/BIPSPI-py3
-python tools/prepare_bipspi_inputs.py \
-    --splits-dir ~/ESMFold-multimer/data/splits \
-    --structures-dir ~/ESMFold-multimer/data/structures \
-    --output-dir ~/bipspi_run/full \
-    --evaluate test
-python generateBIPSPIModel.py \
-    --modelType seq \
-    --pdbsIndir ~/bipspi_run/full/pdbs \
-    --wdir ~/bipspi_run/full/wdir \
-    --N_KFOLD ~/bipspi_run/full/folds.json \
-    --ncpu 16
-# Detach: Ctrl-b d.  Reattach next day: tmux attach -t bipspi.
-```
+After smoke passes, drop `--limit 5` and re-run inside tmux+srun. Outputs land at `~/bipspi_run/full/wdir/results/seq_2/{PREFIX}.tab.res.gz` for every uppercase (evaluated) prefix.
 
-Results land under `~/bipspi_run/full/wdir/results/seq_2/` — one `.tab.res.gz` per evaluated (uppercase) prefix. Aggregate with `monitorScreenlog.py` (after fixing its pre-existing indentation bug) or by parsing the per-complex output directly.
+---
 
-## Reusable inputs from the ESMFold-multimer pipeline
+## 9. Reusable inputs from the ESMFold-multimer pipeline
 
-| Pipeline artifact | Used by BIPSPI? | Through what mechanism |
+| Pipeline artifact | Used by BIPSPI? | How |
 |---|---|---|
-| `data/splits/{train,val,test}.json` | Yes | Read directly by `tools/prepare_bipspi_inputs.py` to build the prefix list and folds JSON. |
-| `data/structures/{PDB}_assembly1.cif` | Yes (with conversion) | The adapter extracts chain_a and chain_b from each mmCIF as separate PDBs using gemmi. |
-| `data/labels/*_assembly1.json` | No | BIPSPI computes its own contact maps from the bound PDB during feature generation. Our JSONs aren't an input format BIPSPI knows. |
-| `data/cached/esm2.zarr` | No | BIPSPI uses PSI-BLAST PSSMs, not ESM2 embeddings. |
-| `data/raw/{candidates,pdb_metadata}.json` | Indirect | Useful for sequence lookup when debugging the adapter; not a direct input. |
+| `~/ESMFold-multimer/data/splits/{train,val,test}.json` | Yes | Read directly by `tools/prepare_bipspi_inputs.py` to build the prefix list and folds JSON. |
+| `~/ESMFold-multimer/data/structures/{PDB}_assembly1.cif` | Yes (with conversion) | The adapter extracts chain_a and chain_b from each mmCIF as separate PDBs using gemmi. |
+| `~/ESMFold-multimer/data/labels/*_assembly1.json` | No | BIPSPI computes its own contact maps from the bound PDB during feature generation. |
+| `~/ESMFold-multimer/data/cached/esm2.zarr` | No | BIPSPI uses PSI-BLAST PSSMs, not ESM2 embeddings. |
+| `~/ESMFold-multimer/data/raw/{candidates,pdb_metadata}.json` | Indirect | Useful for sequence lookup when debugging the adapter. |
 
-Net saving: no re-download from RCSB.  All mmCIFs already on the cluster are reused via the adapter.
+Net saving vs. starting over: no re-download from RCSB. All mmCIFs already on the cluster are reused via the adapter.
 
-## Open decisions (deferred from Gate 1)
+---
 
-When you're ready to run, pick one for each:
+## 10. Open decisions (deferred from Gate 1)
 
-1. **Train+val as training set, or pure train?** Default is **train+val combined as training, test held out** (matches the BIPSPI fold JSON the adapter generates). Alternative: train on train alone, evaluate on val for hyperparam tuning, then retrain train+val and evaluate on test.
-2. **Metric harmonisation with 07b's RF baseline:** BIPSPI emits `auc_pair`, `prec_50/100/500`, `auc_l/r`, `mcc_l/r`. 07b emits `pair-AUROC`, `pair-AUPRC`, `prec@L/L2/L5`, `site-AUROC`, `site-F1`, `site-MCC`. Cleanest comparable: run 07b's evaluator over BIPSPI's per-complex `prefix.tab.res.gz` outputs.  Defer until after smoke test passes.
+When you're ready to commit to a baseline run, pick one for each:
 
-## How to transfer to the cluster
+1. **Train+val as training set, or pure train?** Adapter's default is **train+val combined as training, test held out** (lowercases train+val, uppercases test — BIPSPI's `SKIP_LOWER_PREDICTION` then evaluates only test in the last step).
+2. **Metric harmonisation with 07b's RF baseline:** BIPSPI emits `auc_pair`, `prec_50/100/500`, `auc_l/r`, `mcc_l/r`. 07b emits `pair-AUROC`, `pair-AUPRC`, `prec@L/L2/L5`, `site-AUROC`, `site-F1`, `site-MCC`. Cleanest comparable: run 07b's evaluator over BIPSPI's per-complex `prefix.tab.res.gz` outputs. Defer until after smoke test passes.
 
-**Option A — GitHub fork:**
+---
+
+## 11. How to transfer / sync the code
+
+**Push from local Windows machine:**
 ```bash
-# locally (this Windows machine, WSL or PowerShell)
-cd /e/BIPSPI-Resurrect/BIPSPI
-git remote remove origin
-git remote add origin git@github.com:<your-user>/BIPSPI-py3.git
-git add -A && git commit -m "Python 3 port + critic fixes + cluster scaffold"
-git push -u origin main
-# on the cluster:
-ssh biostruct01@10.205.10.23
-git clone git@github.com:<your-user>/BIPSPI-py3.git ~/BIPSPI-py3
+cd /e/BIPSPI-Resurrect
+git add -A
+git commit -m "..."
+git push
 ```
+(Note: the local git repo is at `/e/BIPSPI-Resurrect/` not `/e/BIPSPI-Resurrect/BIPSPI/` due to a `git init` that happened at the parent. That's why GitHub has `BIPSPI/` as a subdir at the root.)
 
-**Option B — direct rsync (faster for one-off, no GitHub round-trip):**
+**Pull on the cluster:**
 ```bash
-# from WSL
-rsync -avz --exclude='.git/objects/pack' --exclude='__pycache__' \
-    /e/BIPSPI-Resurrect/BIPSPI/ biostruct01@10.205.10.23:~/BIPSPI-py3/
+cd ~/BIPSPI-Resurrect
+git pull
+cd BIPSPI    # all scripts and BIPSPI code live here
 ```
 
-Either works. GitHub is better if you'll iterate; rsync is one-shot. The cluster runs Linux so the relative symlinks the adapter creates for `_u.pdb -> _b.pdb` will work natively.
+---
 
-## Files at a glance
+## 12. Cluster details (haskell / rust)
+
+- **Login**: `ssh biostruct01@10.205.10.23` (VPN-in-WSL required). The cluster has multiple nodes (`haskell`, `rust`) sharing the same `/home` filesystem; commands can run on either.
+- **No sbatch** for regular users. Long jobs run inside `srun --pty bash -l` wrapped in `tmux`.
+- **Conda**: miniforge3 at `~/miniforge3/`. Active env is `protein`.
+
+---
+
+## 13. Files at a glance
 
 ```
-E:\BIPSPI-Resurrect\BIPSPI\
-├── STATUS.md                         <- this file
-├── bipspi_py3_environ.yml            <- Python 3 conda env
-├── bipspi_plus_environ.yml           <- ORIGINAL Py2.7 env (kept for reference)
+~/BIPSPI-Resurrect/BIPSPI/                       (cluster)
+E:\BIPSPI-Resurrect\BIPSPI\                      (local Windows)
+├── STATUS.md                          <- this file
+├── bipspi_py3_environ.yml             <- Python 3 conda env spec (not used; we extended `protein` instead)
+├── bipspi_plus_environ.yml            <- ORIGINAL Py2.7 env (kept for reference)
 ├── tools/
-│   ├── prepare_bipspi_inputs.py      <- splits + cif -> BIPSPI pdbsIndir
-│   └── check_cluster_deps.sh         <- haskell dep probe
-├── Config.py                         <- PORTED
-├── generateBIPSPIModel.py            <- (unchanged top-level entry)
-├── predictComplexes.py               <- PORTED
-├── monitorScreenlog.py               <- PORTED (with one pre-existing parse error left intact)
+│   ├── prepare_bipspi_inputs.py       <- splits + cif -> BIPSPI pdbsIndir (Python 3)
+│   ├── check_cluster_deps.sh          <- haskell dep probe (already run)
+│   ├── install_al2co_clustalw.sh      <- Phase B installer (already run, idempotent)
+│   ├── patch_dependencies_cfg.sh      <- cfg path patcher (already run, idempotent)
+│   ├── download_uniref90_db.sh        <- Phase D downloader (running in tmux now)
+│   └── port_spider2.sh                <- Phase C SPIDER2 patcher (already run, idempotent)
+├── configFiles/cmdTool/
+│   └── dependencies.cfg               <- PATCHED with cluster paths
+├── Config.py                          <- PORTED
+├── generateBIPSPIModel.py             <- (unchanged top-level entry)
+├── predictComplexes.py                <- PORTED
+├── monitorScreenlog.py                <- PORTED (with one pre-existing parse error left intact)
 ├── computeFeatures/
 │   └── common/{boundUnboundMapper,homoOligomerFixer}.py    <- PORTED (P0-1 + P0-2 critic fixes applied)
 ├── codifyComplexes/
@@ -192,6 +272,13 @@ E:\BIPSPI-Resurrect\BIPSPI\
 │   ├── extractModelsFromPdbFile.py            <- PORTED
 │   └── combinePDBs.py                         <- PORTED
 └── evaluation/                                <- 6 files PORTED (.ix/.append idiom)
+
+External (on cluster, NOT in this repo):
+~/tools/al2co/al2co                       <- al2co binary (Phase B)
+~/tools/SPIDER2/                          <- SPIDER2 source + weights (Phase C)
+~/tools/SPIDER2/misc/pred_pssm.py         <- PORTED via tools/port_spider2.sh
+~/databases/uniref90/uniref90.fasta       <- BLAST DB (Phase D — building)
+~/miniforge3/envs/protein/                <- conda env (Phase A — extended with bipspi deps)
 ```
 
 `git diff HEAD` shows every line of the port relative to upstream.
