@@ -1,106 +1,104 @@
 #!/usr/bin/env bash
-# Phase B: install al2co + clustalw 1.83 from source.
+# Phase B: install al2co + clustalw.
 #
-# al2co (Pei & Grishin, swmed.edu) computes per-position conservation scores
-# from a multiple-sequence alignment.  clustalw 1.83 is its alignment input.
-# Both are tiny C programs with no library dependencies beyond libc.
+# clustalw is installed via bioconda (version 2.1).  BIPSPI docs spec'd
+# clustalw 1.83 but al2co only uses standard MSA commands that 1.83 and
+# 2.1 share -- backward compatible.
 #
-# Per BIPSPI docs/repo_help.md, al2co's default name-buffer size (char[500])
-# is too small for many real headers -- patch to char[1024] before building.
+# al2co is a single C file, built from the TheApacheCats/al2co GitHub
+# mirror (the original ftp://iole.swmed.edu source is dead).  Per BIPSPI
+# docs/repo_help.md we patch the name-buffer size from char[500] to
+# char[1024] before compiling.
 #
 # Outputs:
-#   ~/tools/al2co/al2co        (binary)
-#   ~/tools/clustalw1.83/clustalw   (binary)
+#   - clustalw binary on $PATH inside the activated env (e.g. ~/miniforge3/envs/protein/bin/clustalw)
+#   - ~/tools/al2co/al2co  binary
 #
-# After running this, update configFiles/cmdTool/dependencies.cfg to point at
-# them (see end of script for the exact lines).
+# After this script: edit configFiles/cmdTool/dependencies.cfg to point
+# clustalW_path and al2coBin_path at the locations printed at the end.
 
 set -euo pipefail
 
 TOOLS=$HOME/tools
 mkdir -p "$TOOLS"
-cd "$TOOLS"
 
 # ---------------------------------------------------------------------------
-# 1. clustalw 1.83
+# 1. clustalw via bioconda
 # ---------------------------------------------------------------------------
-if [ ! -x "$TOOLS/clustalw1.83/clustalw" ]; then
-  echo "=== Installing clustalw 1.83 ==="
-  CW_URL="http://www.clustal.org/download/1.X/ftp-igbmc.u-strasbg.fr/pub/ClustalW/clustalw1.83.UNIX.tar.gz"
-  if ! wget -q --show-progress "$CW_URL"; then
-    echo "ERROR: download from $CW_URL failed. Try alternative mirrors or pull manually."
-    echo "Alternative: search 'clustalw1.83.UNIX.tar.gz' and place in $TOOLS, then re-run."
-    exit 1
-  fi
-  tar xzf clustalw1.83.UNIX.tar.gz
-  cd clustalw1.83
-  make
-  if [ ! -x ./clustalw ]; then
-    echo "ERROR: clustalw build failed -- binary not produced"
-    exit 1
-  fi
-  echo "clustalw built at $TOOLS/clustalw1.83/clustalw"
-  cd "$TOOLS"
+if ! command -v clustalw >/dev/null 2>&1; then
+  echo "=== Installing clustalw via bioconda ==="
+  conda install -n protein -c bioconda -c conda-forge clustalw -y
 else
-  echo "clustalw already present at $TOOLS/clustalw1.83/clustalw -- skipping"
+  echo "clustalw already on PATH: $(command -v clustalw) -- skipping"
 fi
 
+CLUSTALW_PATH=$(conda run -n protein which clustalw 2>/dev/null || command -v clustalw)
+if [ -z "$CLUSTALW_PATH" ] || [ ! -x "$CLUSTALW_PATH" ]; then
+  echo "ERROR: clustalw install reported success but binary not found"
+  exit 1
+fi
+echo "clustalw: $CLUSTALW_PATH"
+
 # ---------------------------------------------------------------------------
-# 2. al2co (with buffer patch)
+# 2. al2co from GitHub mirror, with buffer patch
 # ---------------------------------------------------------------------------
-if [ ! -x "$TOOLS/al2co/al2co" ]; then
-  echo "=== Installing al2co (with buffer patch) ==="
-  AL_URL="http://prodata.swmed.edu/download/pub/AL2CO/al2co.tar.gz"
-  if ! wget -q --show-progress "$AL_URL"; then
-    echo "ERROR: download from $AL_URL failed."
-    echo "Alternative: pull from https://github.com search 'al2co' for mirrors."
-    exit 1
-  fi
-  mkdir -p al2co
-  tar xzf al2co.tar.gz -C al2co --strip-components=1 2>/dev/null \
-    || tar xzf al2co.tar.gz -C al2co
-  cd al2co
+AL2CO_DIR=$TOOLS/al2co
+if [ ! -x "$AL2CO_DIR/al2co" ]; then
+  echo "=== Cloning al2co from TheApacheCats/al2co ==="
+  rm -rf "$AL2CO_DIR"
+  git clone https://github.com/TheApacheCats/al2co.git "$AL2CO_DIR"
+  cd "$AL2CO_DIR"
 
   # Patch: enlarge name buffers from 500 to 1024 (per BIPSPI docs/repo_help.md).
-  # Catches the common `char xxx[500]` declarations across the .c files.
   echo "Patching name-buffer sizes 500 -> 1024..."
   shopt -s nullglob
   for f in *.c *.h; do
     [ -f "$f" ] || continue
-    # be conservative: only widen *exact* char[500] declarations,
-    # don't touch e.g. char[5000] or unrelated 500 constants.
     sed -i -E 's/\bchar([[:space:]]+[A-Za-z_][A-Za-z0-9_]*)\[500\]/char\1[1024]/g' "$f"
   done
   shopt -u nullglob
 
-  make
+  # Build: single C file, standard libm link.
+  echo "Building al2co..."
+  gcc al2co.c -o al2co -lm
+
   if [ ! -x ./al2co ]; then
     echo "ERROR: al2co build failed -- binary not produced"
     exit 1
   fi
-  echo "al2co built at $TOOLS/al2co/al2co"
   cd "$TOOLS"
 else
-  echo "al2co already present at $TOOLS/al2co/al2co -- skipping"
+  echo "al2co already present at $AL2CO_DIR/al2co -- skipping"
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Print the dependencies.cfg lines you need
+# 3. Smoke test al2co binary (no args -> usage)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Smoke tests ==="
+echo "--- clustalw -version ---"
+"$CLUSTALW_PATH" -version 2>&1 | head -5 || true
+echo ""
+echo "--- al2co (no args, expect usage) ---"
+"$AL2CO_DIR/al2co" 2>&1 | head -10 || true
+echo ""
+
+# ---------------------------------------------------------------------------
+# 4. Print the dependencies.cfg lines you need
 # ---------------------------------------------------------------------------
 cat <<EOF
 
 === DONE ===
 
-Now edit ~/BIPSPI-Resurrect/BIPSPI/configFiles/cmdTool/dependencies.cfg so
-the following lines point at your built binaries:
+Update ~/BIPSPI-Resurrect/BIPSPI/configFiles/cmdTool/dependencies.cfg so
+these lines point at the binaries (replace the existing values):
 
-    al2coBin_path     $TOOLS/al2co/al2co
-    clustalW_path     $TOOLS/clustalw1.83/clustalw
-    cdHitBin_path     \$(which cd-hit)
-    psiBlastBin       \$(which psiblast)
-    psiBlastDB_path   /path/to/uniref90.blastdb   # see Phase D download script
+    al2coBin_path     $AL2CO_DIR/al2co
+    clustalW_path     $CLUSTALW_PATH
+    cdHitBin_path     $(command -v cd-hit 2>/dev/null || echo "cd-hit  # after: module load CD-HIT/4.8.1-GCC-12.2.0")
+    psiBlastBin       $(command -v psiblast 2>/dev/null || echo "psiblast  # after: module load BLAST+/2.14.1-gompi-2023a")
+    psiBlastDB_path   /home/biostruct01/databases/uniref90/uniref90.fasta   # after Phase D
 
-(cd-hit + psiblast come from \`module load\` so you can use their absolute
-paths from \`which\`, or just keep them as bare \`cd-hit\` / \`psiblast\`
-since they're on PATH after module load.)
+(cd-hit and psiblast come from \`module load\`; keep them as bare names
+or use absolute paths -- both work.)
 EOF
