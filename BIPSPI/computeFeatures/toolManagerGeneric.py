@@ -4,8 +4,21 @@ import os
 import re
 import subprocess
 import gzip
-from Bio.PDB.Polypeptide import three_to_one, one_to_three
+from Bio.SeqUtils import IUPACData
 from Bio.PDB.Structure import Structure
+
+
+def three_to_one(aa_three_letter):
+    """Drop-in for Bio.PDB.Polypeptide.three_to_one (removed in Biopython 1.80).
+    IUPACData.protein_letters_3to1 uses capitalized keys (e.g. 'Ala' -> 'A')."""
+    return IUPACData.protein_letters_3to1[aa_three_letter.capitalize()]
+
+
+def one_to_three(aa_one_letter):
+    """Drop-in for Bio.PDB.Polypeptide.one_to_three (removed in Biopython 1.80).
+    IUPACData.protein_letters_1to3 returns capitalized form (e.g. 'A' -> 'Ala')."""
+    return IUPACData.protein_letters_1to3[aa_one_letter].upper()
+
 from Bio.PDB.Model import Model
 from Bio.PDB.Chain import Chain
 from Bio.PDB.Residue import Residue

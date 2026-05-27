@@ -1,7 +1,14 @@
 from __future__ import absolute_import
 import os,sys
 from Bio.PDB.PDBParser import PDBParser
-from Bio.PDB.Polypeptide import is_aa, three_to_one
+from Bio.PDB.Polypeptide import is_aa
+from Bio.SeqUtils import IUPACData
+
+
+def three_to_one(aa_three_letter):
+    """Drop-in for Bio.PDB.Polypeptide.three_to_one (removed in Biopython 1.80)."""
+    return IUPACData.protein_letters_3to1[aa_three_letter.capitalize()]
+
 
 SMALL_CHAINS_LIMIT=9
 

@@ -1,6 +1,13 @@
 import pymol
 import os
-from Bio.PDB.Polypeptide import one_to_three, PPBuilder
+from Bio.PDB.Polypeptide import PPBuilder
+from Bio.SeqUtils import IUPACData
+
+
+def one_to_three(aa_one_letter):
+    """Drop-in for Bio.PDB.Polypeptide.one_to_three (removed in Biopython 1.80)."""
+    return IUPACData.protein_letters_1to3[aa_one_letter].upper()
+
 from pythonTools.myPDBParser import myPDBParser as PDBParser
 from computeFeatures.common.boundUnboundMapper import BoundUnboundMapper
 
