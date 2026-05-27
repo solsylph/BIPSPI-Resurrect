@@ -326,7 +326,7 @@ class ResultsManager(object):
     trueCategLabel, falseCategLabel= 1,-1
     if self.resultsPairs["categ"].isnull().values.all():
       trueCategLabel, falseCategLabel= np.nan, np.nan
-    with gzip.open(fname,"w") as f:
+    with gzip.open(fname,"wt") as f:
       chainIds= []
       resIds= []
       scores= []
@@ -364,7 +364,7 @@ class ResultsManager(object):
 
     '''
     results= self.resultsPairs.copy()
-    with gzip.open(outName.replace(".gz","")+".gz","w") as f:
+    with gzip.open(outName.replace(".gz","")+".gz","wt") as f:
       if not self.performance_summary is None:
         f.write("#auc= %2.5f\n"%(self.performance_summary["auc_pair"]))
       if removeCateg:

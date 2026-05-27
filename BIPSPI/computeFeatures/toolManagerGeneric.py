@@ -240,7 +240,7 @@ class ToolManager(Configuration):
     dirName, baseName = os.path.split(outName)
     tmpOutName= os.path.join(dirName, "tmp-"+baseName)
     try:
-      with gzip.open(tmpOutName,"w") as outFile:
+      with gzip.open(tmpOutName,"wt") as outFile:
         outFile.write(headerStr)
         outFile.write("\n".join(listOfRecords))
       tryToMove(tmpOutName, outName)

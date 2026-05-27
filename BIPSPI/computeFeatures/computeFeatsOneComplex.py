@@ -104,7 +104,7 @@ class OneComplexFeatComputer(FeaturesComputer):
                                                                                            "resId":str, "chainId":str,
                                                                                            "chainIdL":str, "chainIdR":str})
               comments= ""
-              with gzip.open(os.path.join(root, fName)) as f:
+              with gzip.open(os.path.join(root, fName), "rt") as f:
                 for line in f:
                   if line.startswith("#"):
                     comments+=line
@@ -117,7 +117,7 @@ class OneComplexFeatComputer(FeaturesComputer):
               if len(comments)==0:
                 data.to_csv(os.path.join(root, newName), index=False, sep=" ", compression="gzip")
               else:
-                with gzip.open(os.path.join(root, newName),"w") as f:
+                with gzip.open(os.path.join(root, newName),"wt") as f:
                   f.write(comments)
                   data.to_csv(f, index=False, sep=" ") #, compression="gzip")
 

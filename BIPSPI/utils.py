@@ -113,9 +113,9 @@ def tryToCleanDir(dirName, substr="_", rootDataDir=conf.computedFeatsRootDir):
       
 def openForReadingFnameOrGz( fname):
   if fname.endswith(".gz"):
-    return gzip.open(fname)  
+    return gzip.open(fname, "rt")
   elif os.path.isfile(fname+".gz"):
-    return gzip.open(fname+".gz")
+    return gzip.open(fname+".gz", "rt")
   else:
     return open(fname)
 

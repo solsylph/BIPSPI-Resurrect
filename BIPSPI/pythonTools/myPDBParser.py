@@ -34,7 +34,7 @@ class myPDBParser(PDBParser, MMCIFParser):
       if not isinstance(fileName, str) or not fileName.endswith(".gz"):
         structure= PDBParser.get_structure( self,pdbId, fileName)
       else:
-        with gzip.open(fileName) as f:
+        with gzip.open(fileName, "rt") as f:
           structure= PDBParser.get_structure( self, pdbId, f)
     except Exception as e:
       print(e)
