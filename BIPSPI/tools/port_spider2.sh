@@ -33,26 +33,30 @@ path = sys.argv[1]
 with open(path) as f:
     text = f.read()
 
-# Py2 redirect-print:  print >>FH, EXPR    ->    print(EXPR, file=FH)
-# Catches the three call sites in pred_pssm.py:
-#   print >>fp, '#\tAA\t...'
-#   print >>fp, ('%i\t%c...' % (...))
-#   print >>sys.stderr, "Usage: RUN *.pssmfile"
-#
-# Regex is single-line (no continuations in this file).  Captures (FH, REST).
-pat = re.compile(r"^(\s*)print\s*>>\s*([\w\.]+)\s*,\s*(.+)$", re.MULTILINE)
-def repl(m):
+# Fix 1: Py2 redirect-print:  print >>FH, EXPR    ->    print(EXPR, file=FH)
+# Three call sites in pred_pssm.py.  Trailing-comma "no newline" idiom -> end=''.
+pat_print = re.compile(r"^(\s*)print\s*>>\s*([\w\.]+)\s*,\s*(.+)$", re.MULTILINE)
+def repl_print(m):
     indent, fh, expr = m.group(1), m.group(2), m.group(3).rstrip()
-    # If expr ends with a trailing comma (Py2 "no newline" idiom), translate to end=''.
     if expr.endswith(','):
         expr = expr[:-1].rstrip()
         return f"{indent}print({expr}, file={fh}, end='')"
     return f"{indent}print({expr}, file={fh})"
-new_text, n = pat.subn(repl, text)
-print(f"Patched {n} print-redirect statements")
+text, n_print = pat_print.subn(repl_print, text)
+print(f"Patched {n_print} print-redirect statements")
+
+# Fix 2: numpy.load() default changed to allow_pickle=False in numpy >=1.16.3.
+# SPIDER2's .npz files contain object-dtype arrays (scipy.io.savemat-style
+# nested structured arrays), so loading them requires allow_pickle=True.
+# Only match calls that DON'T already have an allow_pickle argument.
+pat_load = re.compile(r"numpy\.load\(([^,)]+)\)(?!\s*[,])")
+def repl_load(m):
+    return f"numpy.load({m.group(1)}, allow_pickle=True)"
+text, n_load = pat_load.subn(repl_load, text)
+print(f"Patched {n_load} numpy.load() calls (added allow_pickle=True)")
 
 with open(path, "w") as f:
-    f.write(new_text)
+    f.write(text)
 PY
 
 echo ""
