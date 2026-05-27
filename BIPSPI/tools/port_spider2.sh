@@ -45,23 +45,30 @@ def repl_print(m):
 text, n_print = pat_print.subn(repl_print, text)
 print(f"Patched {n_print} print-redirect statements")
 
-# Fix 2: numpy.load() default changed to allow_pickle=False in numpy >=1.16.3.
-# SPIDER2's .npz files contain object-dtype arrays (scipy.io.savemat-style
-# nested structured arrays), so loading them requires allow_pickle=True.
-# Only match calls that DON'T already have an allow_pickle argument.
-pat_load = re.compile(r"numpy\.load\(([^,)]+)\)(?!\s*[,])")
+# Fix 2: numpy.load() compatibility for Py2-pickled .npz files in Py3.
+# Two requirements when loading scipy.io-style nested-object arrays
+# that were pickled under Python 2:
+#   allow_pickle=True   -- numpy >=1.16.3 default is False (security)
+#   encoding='latin1'   -- decodes Py2 byte strings safely without loss
+# (numpy docs explicitly recommend latin1 for cross-Py2/Py3 pickle loading.)
+# Idempotent: collapses any numpy.load(X[, ...]) to the canonical form.
+pat_load = re.compile(r"numpy\.load\(([^)]+)\)")
 def repl_load(m):
-    return f"numpy.load({m.group(1)}, allow_pickle=True)"
+    first_arg = m.group(1).split(',')[0].strip()
+    return f"numpy.load({first_arg}, allow_pickle=True, encoding='latin1')"
 text, n_load = pat_load.subn(repl_load, text)
-print(f"Patched {n_load} numpy.load() calls (added allow_pickle=True)")
+print(f"Patched {n_load} numpy.load() calls (allow_pickle=True, encoding='latin1')")
 
 with open(path, "w") as f:
     f.write(text)
 PY
 
 echo ""
-echo "=== Diff vs backup ==="
-diff -u "${SRC}.bak."* "$SRC" | head -40 || true
+echo "=== Diff vs most recent backup ==="
+LATEST_BAK=$(ls -t "${SRC}.bak."* 2>/dev/null | head -1)
+if [ -n "$LATEST_BAK" ]; then
+  diff -u "$LATEST_BAK" "$SRC" | head -40 || true
+fi
 echo ""
 
 # Sanity: byte-compile under Py3.
