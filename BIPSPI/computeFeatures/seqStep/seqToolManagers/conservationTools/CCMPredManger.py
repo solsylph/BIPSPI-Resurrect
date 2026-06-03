@@ -49,10 +49,11 @@ class CCMPredManager(CorrMutGeneric):
     try:
       process= Popen(["nvidia-smi", "--query-gpu=memory.free", "--format=csv"], stdout=PIPE, stderr=PIPE)
       processOut= process.communicate()
-      if processOut[1]!="" :
+      # Py3 Popen returns bytes; compare with bytes literals.
+      if len(processOut[1]) > 0 :
         return 0
       else:
-        array_lines= processOut[0].split("\n")
+        array_lines= processOut[0].decode().split("\n")
         freeMem, memUnit= array_lines[1+gpuNumber].split()
         freeMem= float(freeMem)
         if memUnit=="GiB":

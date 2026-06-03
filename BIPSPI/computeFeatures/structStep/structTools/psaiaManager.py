@@ -91,8 +91,9 @@ output_dir:	%s
       proc = Popen([os.path.join(self.psaiaRootDir,"psa"),(self.configFileName%prefixExtended),
                     self.listFileNameForPSAIA%prefixExtended],
                     stdin= PIPE, stdout=PIPE, stderr=PIPE)
-      output=  proc.communicate(input="y\n")
-      if output== None or output[1]!="" or "There was an error in PDB" in output[0]:
+      output=  proc.communicate(input=b"y\n")
+      # Py3 Popen returns bytes; compare with bytes literals + len() for emptiness.
+      if output is None or len(output[1]) > 0 or b"There was an error in PDB" in output[0]:
         print(output)
         print ("Error when computing PSAIA for %s"%pdbFname)
         raise FeatureComputerException("Error when computing PSAIA for %s"%pdbFname)

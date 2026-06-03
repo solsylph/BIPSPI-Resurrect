@@ -33,10 +33,11 @@ class PsicovManager(CorrMutGeneric):
     '''
       :param processOut (stdin, stderr)
     '''
-    if len(processOut[1])>0 or  processOut[0]=="" or "*** Sorry" in processOut[0]: #Error happend
+    # Py3 Popen returns bytes; compare with bytes literals + decode for str ops.
+    if len(processOut[1])>0 or processOut[0]==b"" or b"*** Sorry" in processOut[0]: #Error happend
       print(processOut)
       raise ValueError("Error processing data psicov")
-    for line in processOut[0].split("\n")[1:]:
+    for line in processOut[0].decode().split("\n")[1:]:
       if len(line)==0: break
       i, j, score= line.split()
       i, j=int(i)-1, int(j)-1

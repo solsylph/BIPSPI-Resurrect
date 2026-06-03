@@ -239,7 +239,8 @@ class Al2coManager(SeqToolManager):
     try :
       proc = Popen(clustalCommand, stdin= PIPE, stdout=PIPE, stderr=PIPE)
       output=  proc.communicate()
-      if output== None or output[1]!="" or "There was an error parsing psiblast, clustalw" in output[0]:
+      # Py3 Popen returns bytes; compare with bytes literals + len() for emptiness.
+      if output is None or len(output[1]) > 0 or b"There was an error parsing psiblast, clustalw" in output[0]:
         print(output)
         print ("Error when clustalw %s for al2Co"%psiBlastOut)
         raise FeatureComputerException("Error when clustalw %s for al2Co"%psiBlastOut)
