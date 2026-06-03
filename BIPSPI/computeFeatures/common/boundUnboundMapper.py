@@ -67,6 +67,12 @@ class BoundUnboundMapper(object):
       are mapped thanks to a sequence alignment 
     '''  
     aligU2BDictsTable, aligU2BScores = self._all_against_all_alig()
+    # If either bound or unbound chain list was empty (e.g. malformed PDB),
+    # there's nothing to map. Return early instead of crashing on
+    # np.max(empty_array). Downstream code treats an empty boundToUnboundDict
+    # as "no correspondence found".
+    if aligU2BScores.size == 0:
+      return None
     n2Take= max(aligU2BScores.shape)
     maxVal= np.max(aligU2BScores)+ 1e-4
     bestScore= np.min(aligU2BScores)

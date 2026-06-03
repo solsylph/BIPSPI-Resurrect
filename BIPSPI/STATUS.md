@@ -20,9 +20,9 @@
 | Cfg patch | Update `dependencies.cfg` with cluster paths | ✅ |
 | C | Port SPIDER2 to Py3.10 (numpy-only, option a-i) | ✅ |
 | **D** | **Download uniref90 + makeblastdb** | **✅ (2026-06-03)** |
-| Runtime fixes | 4 rounds of post-port whack-a-mole (Biopython 1.80, gzip mode, gemmi 0.6, BIPSPI default-arg bug) | ✅ |
+| Runtime fixes | **8 rounds of post-port whack-a-mole** (Biopython 1.80, gzip mode, gemmi 0.6, BIPSPI default-arg, parsePsiBlast None, zip-as-list, Popen bytes, clustalw header, build_peptides model-id, build_correspondence empty) | ✅ |
 | Canonical data | Fetch BIPSPI's published training set (info_HEDt.tab + Benchmark 5 + RCSB) | ✅ (2610/2611 prepared) |
-| Smoke seq | `--modelType seq` against `./docs/trainingPDBsExample` | ⏳ **psiblast running 2/6 chains done** |
+| Smoke seq | `--modelType seq` against `./docs/trainingPDBsExample` | ⏳ **5+ complexes processed, ~6+ chains feature-complete, hitting malformed bundled data (`2c1o`, `2v6x` have empty _u placeholders)** |
 | Canonical run | Full 2611-complex BIPSPI seq training | blocked on smoke |
 | Re-baseline | Our splits + 07b-comparable evaluation | blocked on canonical run |
 
@@ -134,16 +134,42 @@ Py3 `gzip.open(...)` defaults to binary mode. Patched explicit text mode (`"wt"`
 ### Round 3: gemmi ≥0.6 API change in our adapters (2 files)
 gemmi renamed `Model.name` (str) → `Model.num` (int). Patched in `tools/fetch_bipspi_training_set.py` and `tools/prepare_bipspi_inputs.py` to use `gemmi.Model(str(src_model.num))`.
 
-### Round 4 (NEW 2026-06-03): BIPSPI default-argument-evaluation bug
+### Round 4 (2026-06-03): BIPSPI default-argument-evaluation bug
 **Pre-existing logic bug** (not Py2→Py3 specific): three function definitions in `generateBIPSPIModel.py` had `methodProtocol=conf.modelType` as a default argument. Python evaluates defaults at function-definition time, BEFORE `parse_args()` runs. So `--modelType seq` was silently ignored and BIPSPI always ran in the configFile default mode (`struct`), which then tried to invoke PSAIA.
 
 Fixed two ways for belt-and-braces:
 - `configFile.cfg`: changed default `modelType struct` → `modelType seq` (matches our actual use case)
 - `generateBIPSPIModel.py`: changed `computeFeatures`, `codifyStep`, `trainAndTest` to `methodProtocol=None` with `if X is None: X = conf.X` lookups inside the function bodies. CLI overrides now actually work.
 
+### Round 5 (2026-06-03): parsePsiBlast None comparison
+**Py2 silently treated `None >= int` as False; Py3 raises TypeError.** `parsePsiBlast` initialised `identity, evalue = None, None` then on the first `>` line in the BLAST output tried the validity check before any `Identities = ...` line had been parsed. Fix: `if identity is not None and evalue is not None and ...` guards at both validity-check sites in `al2coWorkers/parsePsiBlast.py`.
+
+### Round 6 (2026-06-03): zip-as-list in seqToolManager
+**Py3 `zip()` returns an iterator, not a list.** `list_of_profilesList = zip(*feats)` was later indexed with `list_of_profilesList[featNum][i]` → TypeError. Fix: `list_of_profilesList = list(zip(*feats))` in `seqToolManager.py:55`.
+
+### Round 7 (2026-06-03): Popen bytes-vs-str in subprocess output checks
+**Py3 `Popen.communicate()` returns bytes; Py2 returned str.** Four tool-managers had checks like `output[1] != ""` which evaluate True in Py3 because `b"" != ""`. Spuriously triggered "error" path even when subprocess succeeded. Patched with bytes literals (`b""`) + `len() > 0` + `.decode()` where downstream uses str ops:
+- `Al2coManager.runCdHit` (cd-hit invocation)
+- `Al2coManager.runClustalW` (clustalw invocation)
+- `psaiaManager.computeOneFile` (PSAIA — inactive in seq mode, preventive)
+- `CCMPredManger`, `PSICOVManager` (inactive in seq mode, preventive)
+
+### Round 8 (2026-06-03): clustalw 2.1 header incompatibility with al2co
+**Modern clustalw 2.1 writes `CLUSTAL 2.1 Multiple Sequence Alignments` as its first line; al2co's parser only recognises `CLUSTAL W` (1.83 format).** al2co then treated the title as a sequence name and errored with `Names do not match, was: CLUSTAL, now: InputSeq`. Fix: `Al2coManager.runClustalW` now rewrites the first line of the clustalw output to start with `CLUSTAL W ` before passing to al2co. One-shot post-process, no recompile needed.
+
+### Round 9 (2026-06-03): Biopython model-id assumption in build_peptides
+**Biopython's `PPBuilder.build_peptides(structure)` assumes the first model has id == 0.** Some PDBs preserve a non-zero MODEL number → `KeyError: 0`. Fix: `computeContactMap.build_peptides` now bypasses Structure/Model levels entirely by iterating Chains directly and calling `self.ppb.build_peptides(chain, aa_only=False)` on each Chain (level "C"), which has no model-id assumption. Also handles empty Structure → returns `[]` (avoids PEP 479 `StopIteration → RuntimeError` inside joblib generators).
+
+### Round 10 (2026-06-03): empty alignment table in build_correspondence
+**`boundUnboundMapper.build_correspondence` called `np.max(aligU2BScores)` on a potentially zero-size array** (when bound or unbound chain list was empty due to malformed PDB). Fix: early return when `aligU2BScores.size == 0`. Makes the run resilient to per-complex data quality issues; downstream treats empty `boundToUnboundDict` as "no correspondence".
+
+### Bundled-data quality issues discovered
+- `2c1o_l_u.pdb` and `2c1o_r_u.pdb` in `./docs/trainingPDBsExample/` were **12-byte placeholders** containing just the text `"2c1o_l_b.pdb"` (intended-but-malformed symlinks). Replaced with proper `ln -s _b.pdb _u.pdb` symlinks per BIPSPI's documented convention.
+- `2v6x` likely has the same issue — same per-complex fix applies.
+
 ### Still pending (will surface in remaining runs)
 - `xgboost 0.80 → 3.2 API` at training step (`trainAndTest/classifiers/xgBoost.py`)
-- `from Bio.PDB.Polypeptide import aa1` in `spider2Manager.py` and `Al2coManager.py` — `aa1` may also have been removed in 1.80 cleanup
+- `from Bio.PDB.Polypeptide import aa1` confirmed **STILL WORKS** in Biopython 1.86 (we expected it might be removed; it wasn't). One less worry.
 
 ## 9. Canonical training data (assembled 2026-06-03)
 
