@@ -209,7 +209,10 @@ class Al2coManager(SeqToolManager):
       print(" ".join(cdhitCmd))
       proc = Popen(cdhitCmd, stdin= PIPE, stdout=PIPE, stderr=PIPE)
       output=  proc.communicate()
-      if output== None or output[1]!="" or "There was an error cd-hit psiblast" in output[0]:
+      # Popen.communicate() returns bytes in Py3, not str.  Compare with bytes
+      # literals and use len() for emptiness so an empty stderr (b"") doesn't
+      # spuriously trigger the error path (b"" != "" is True in Py3).
+      if output is None or len(output[1]) > 0 or b"There was an error cd-hit psiblast" in output[0]:
         print(output)
         print ("Error when parsing %s for al2Co"%psiBlastOut)
         raise FeatureComputerException("Error when cd-hit %s for al2Co"%psiBlastOut)
