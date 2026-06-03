@@ -244,6 +244,23 @@ class Al2coManager(SeqToolManager):
         print(output)
         print ("Error when clustalw %s for al2Co"%psiBlastOut)
         raise FeatureComputerException("Error when clustalw %s for al2Co"%psiBlastOut)
+
+      # al2co's readali expects the first line to start with "CLUSTAL W"
+      # (clustalw 1.83 header).  clustalw 2.1 writes "CLUSTAL 2.1 Multiple
+      # Sequence Alignments" instead, which al2co treats as a sequence name
+      # and then errors with "Names do not match, was: CLUSTAL, now: ...".
+      # Rewrite the header line to keep al2co happy.
+      try:
+        with open(clustalWOutName, "r") as fh:
+          contents = fh.read()
+        lines = contents.split("\n", 1)
+        if lines and not lines[0].startswith("CLUSTAL W"):
+          new_first = "CLUSTAL W " + lines[0]
+          rest = lines[1] if len(lines) > 1 else ""
+          with open(clustalWOutName, "w") as fh:
+            fh.write(new_first + "\n" + rest)
+      except (OSError, IOError):
+        pass  # if rewrite fails, let al2co raise its own error
       return clustalWOutName
     except (Exception, KeyboardInterrupt):
       tryToRemove(clustalWOutName)
