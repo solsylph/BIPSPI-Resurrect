@@ -198,7 +198,7 @@ def trainAndTestOneFold(trainData, testPrefixes, trainSubsetN, testPath, outputP
     print("Free memory for evaluateOneResultObj: %s GB. Njobs: %s" % (freeMem, nJobs))
     Parallel(n_jobs=nJobs)(delayed(evaluateOneResultObj)(testPrefix, resultObj, False)
                            for testPrefix, resultObj in resultsForEvaluation_list)
-    finalResults= zip(*resultsForEvaluation_list)[1]
+    finalResults= list(zip(*resultsForEvaluation_list))[1]  # Py3: zip() returns iterator, not list
   else:
     finalResults=[]
   del resultsForEvaluation_list
