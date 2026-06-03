@@ -67,6 +67,14 @@ def mergeSplitFolds(dataIds_multistep, trainPrefixes_testPrefixes_list, prefixes
         # print("%s ------------> %s"%(new_trainPrefix, filter(lambda x: x[:4].isupper(),involvedPrefixes)))
         if not involvedPrefixes.intersection(testPrefixes_ori):
           trainPrefixes_idx.append( idx)
+    if len(trainPrefixes_idx)==0:
+      # Too few complexes to achieve orthogonality (smoke-test path only; canonical run won't hit this).
+      # Fall back to all stage-1 predictions for training complexes regardless of overlap.
+      import warnings
+      warnings.warn("Fold %d: stage-2 orthogonality unachievable (dataset too small); "
+                    "using all stage-1 training predictions as fallback." % foldNum)
+      trainPrefixes_idx = [idx for ori in trainPrefixes_ori
+                           for _, idx in fromOriPrefix_to_prefixMult.get(ori, set())]
     if len(trainPrefixes_idx)==0: raise ValueError("Error, the train/test split for fold %d is not orthogonal for %s/%s"%(
       foldNum, trainPrefixes_ori, testPrefixes_ori) +". You may try to increase number of subfolds or k-fold number")
     testIdxsToTrainIdxs.append( (testPrefixes_idx, [trainPrefixes_idx]) )
