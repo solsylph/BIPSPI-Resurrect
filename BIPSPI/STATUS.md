@@ -20,10 +20,10 @@
 | Cfg patch | Update `dependencies.cfg` with cluster paths | ✅ |
 | C | Port SPIDER2 to Py3.10 (numpy-only, option a-i) | ✅ |
 | **D** | **Download uniref90 + makeblastdb** | **✅ (2026-06-03)** |
-| Runtime fixes | **8 rounds of post-port whack-a-mole** (Biopython 1.80, gzip mode, gemmi 0.6, BIPSPI default-arg, parsePsiBlast None, zip-as-list, Popen bytes, clustalw header, build_peptides model-id, build_correspondence empty) | ✅ |
+| Runtime fixes | **16 rounds of post-port whack-a-mole** (Rounds 1-10 see below + Rounds 11-16: GroupKFold n_sub<2, md5 encode, zip subscript, pandas numeric_only, xgboost label encoding, mergeSplitFolds fallback) | ✅ |
 | Canonical data | Fetch BIPSPI's published training set (info_HEDt.tab + Benchmark 5 + RCSB) | ✅ (2610/2611 prepared) |
-| Smoke seq | `--modelType seq` against `./docs/trainingPDBsExample` | ⏳ **5+ complexes processed, ~6+ chains feature-complete, hitting malformed bundled data (`2c1o`, `2v6x` have empty _u placeholders)** |
-| Canonical run | Full 2611-complex BIPSPI seq training | blocked on smoke |
+| Smoke seq | `--modelType seq` against `./docs/trainingPDBsExample` | ✅ **Complete 2026-06-03. Both seq + seq_2 stages trained and evaluated. 6 complexes, 16 rounds of fixes.** |
+| Canonical run | Full 2611-complex BIPSPI seq training | ⏳ ready to launch |
 | Re-baseline | Our splits + 07b-comparable evaluation | blocked on canonical run |
 
 ---
@@ -183,9 +183,27 @@ bash tools/fix_bundled_data_stubs.sh /path/to/pdbsIndir
 
 Also, **`computeFeatures/common/boundUnboundMapper.py:build_correspondence`** has an empty-array guard (Round 10 above), so even without the fix-up script, malformed complexes now skip gracefully instead of crashing the whole batch. The script is the proactive solution; the guard is the safety net.
 
-### Still pending (will surface in remaining runs)
-- `xgboost 0.80 → 3.2 API` at training step (`trainAndTest/classifiers/xgBoost.py`)
-- `from Bio.PDB.Polypeptide import aa1` confirmed **STILL WORKS** in Biopython 1.86 (we expected it might be removed; it wasn't). One less worry.
+### Round 11 (2026-06-03): GroupKFold n_sub < 2 in crossValidationSplitter
+**`GroupKFold` requires `n_splits >= 2`; with 6 example complexes and N_KFOLD=2, each outer training split falls into 1 scope group.** Two fixes: (a) cap `n_sub = min(N_SUB_FOLDS, len(set(current_groups)))` before calling `GroupKFold`; (b) when `n_sub < 2`, fall back to a single sub-fold using all training indices (degenerate case — canonical run always has `n_groups >= 3`). Also fixed `e.message` → `str(e)` (Py2→Py3) in the except handler.
+
+### Round 12 (2026-06-03): hashlib.md5 requires bytes (Py2→Py3)
+**`hashlib.md5(str)` worked in Py2 (str was bytes); Py3 requires encoded bytes.** Fixed `hashlib.md5("...".encode())` in `trainAndTest/processOneFold.py:156`.
+
+### Round 13 (2026-06-03): xgboost 3.x label encoding
+**xgboost 3.x `binary:logistic` requires labels `{0, 1}`; BIPSPI uses `{-1, 1}`.** Fixed by remapping: `trainLabels = (np.asarray(trainLabels) > 0).astype(np.float32)` before `modelo.fit()` in `trainAndTest/classifiers/xgBoost.py`. `predict_proba` output is unchanged.
+
+### Round 14 (2026-06-03): zip subscript in processOneFold (Py2→Py3)
+**`zip(*list)[1]` fails in Py3 — zip returns an iterator.** Fixed `list(zip(*resultsForEvaluation_list))[1]` in `trainAndTest/processOneFold.py:201`.
+
+### Round 15 (2026-06-03): pandas 2.x mean() on mixed-type DataFrame
+**`df.mean(axis=0)` in pandas 2.x raises `TypeError` on non-numeric columns (the prefix-name column).** Fixed `summary.mean(axis=0, numeric_only=True)` in `trainAndTest/trainAndTest.py:225`.
+
+### Round 16 (2026-06-03): mergeSplitFolds stage-2 orthogonality fallback
+**With 6 example complexes and N_KFOLD=2, every stage-1 prediction was made by a model trained on exactly the stage-2 test set — orthogonality is mathematically impossible.** Added a fallback in `mergeSplitFolds`: when `trainPrefixes_idx` is empty, warn and use all stage-1 predictions for training complexes regardless of overlap. Raises only if still empty after fallback. Canonical run (2610 complexes, N_KFOLD=10) never hits this path.
+
+### Confirmed NOT issues
+- `from Bio.PDB.Polypeptide import aa1` still works in Biopython 1.86.
+- `nthread` param in xgboost 3.x — deprecated but accepted without error.
 
 ## 9. Canonical training data (assembled 2026-06-03)
 
@@ -324,23 +342,31 @@ External (on cluster, NOT in this repo):
 
 ## 13. Current activity (live)
 
-**As of 2026-06-03 ~19:30**: seq-mode bundled-example smoke test running on haskell. Iterating through the ~5-6 complexes in `./docs/trainingPDBsExample/`. Phase D fully verified (188 M sequences queryable via psiblast).
+**As of 2026-06-03**: **Smoke test COMPLETE.** 16 rounds of runtime fixes total (Rounds 1-10 feature pipeline; Rounds 11-16 training pipeline). Both seq and seq_2 stages ran end-to-end on the 6-complex bundled example. Results produced (auc_pair ~0.61 stage-1, ~0.59 stage-2 — meaningless for 6 toy complexes, proves the pipeline runs). Models saved at `/tmp/test_bipspi_seq_v2/modelsComputed/`.
 
-**Stages done end-to-end** for 1A2K, 1AHW, 1ACB, 2c1o, partial 1ACB-2nd-chain:
-- contact maps
-- bound/unbound mapping (with build_peptides chain-iter fix)
-- psiblast PSSMs (cached in wdir, ~5 min each first time, instant on resume)
-- winSeq
-- al2co (with clustalw 2.1 header rewrite)
-- SPIDER2 (the "Error computing spider2" message is cosmetic — it's just numpy DeprecationWarning on stderr; .spd3 files are produced correctly)
+**Ready to launch Path A canonical run** (2610 complexes, N_KFOLD=10, 16 CPUs). ETA: 24-72 hours dominated by psiblast (~15-30 min per chain against uniref90, 8 parallel at 16 CPUs/2 threads). The earlier 5-8 hr estimate was too optimistic; budget `--time=72:00:00`.
 
-**Currently hitting**: bundled-data quality issues. Two complexes (`2c1o`, `2v6x`) shipped with 12-byte placeholder `_u.pdb` files instead of real symlinks. `2c1o` fixed manually (Round 10 + ln -s). `2v6x` either fixed or about to be via `tools/fix_bundled_data_stubs.sh`. `build_correspondence` empty-array guard catches anything we miss.
+**Path A launch** (from existing 72-hr srun on haskell):
+```bash
+tmux new -s bipspi_canonical
+# inside tmux:
+conda activate protein
+module load BLAST+/2.14.1-gompi-2023a
+module load CD-HIT/4.8.1-GCC-12.2.0
+cd ~/BIPSPI-Resurrect/BIPSPI
+python generateBIPSPIModel.py \
+    --modelType seq \
+    --pdbsIndir ~/bipspi_run/canonical/pdbs \
+    --scopeFamiliesFname ~/bipspi_run/canonical/info_HEDt.noheader.tab \
+    --N_KFOLD 10 \
+    --wdir ~/bipspi_run/canonical/wdir \
+    --ncpu 16
+# Ctrl-b d to detach. Do NOT close terminal without detaching first.
+```
 
-**Likely-final remaining failure**: `xgboost 0.80 → 3.2 API` gap in `trainAndTest/classifiers/xgBoost.py` at the training step. Won't surface until all complexes' feature pipelines complete and codification finishes. Confirmed NOT issues: `aa1` import (still works in Biopython 1.86), seq-feature pipeline (proven working on 5 chains).
-
-**Once smoke completes**: fire Path A canonical run in fresh tmux+srun, ~5-8 hr overnight. Then Path B against our splits.
+**After canonical run**: check auc_pair against BIPSPI published numbers (~0.72 on Benchmark 5), then fire Path B.
 
 ### Quick handoff for a fresh chat
 1. Open Claude Code with CWD = `E:\BIPSPI-Resurrect\BIPSPI\`
-2. Prompt: "Read STATUS.md. We're mid-smoke-test on haskell. Last error / state was [paste]. Resume."
-3. STATUS.md is the single source of truth for the port + cluster setup. No other files required to continue.
+2. Prompt: "Read STATUS.md. Smoke complete, canonical run [running/done]. Last output: [paste]."
+3. STATUS.md is the single source of truth. No other files required.
