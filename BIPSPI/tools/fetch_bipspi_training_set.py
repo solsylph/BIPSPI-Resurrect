@@ -139,7 +139,9 @@ def extract_chains_to_pdb(src_pdb: Path, chain_spec: str, dest_pdb: Path) -> boo
     new_struct = gemmi.Structure()
     new_struct.cell = structure.cell
     new_struct.spacegroup_hm = structure.spacegroup_hm
-    new_model = gemmi.Model(src_model.name)
+    # gemmi >=0.6 renamed Model.name -> Model.num (int); Model() constructor
+    # still takes a string identifier.
+    new_model = gemmi.Model(str(src_model.num))
 
     n_chains = 0
     for chain in src_model:
