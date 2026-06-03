@@ -52,12 +52,18 @@ class ContactMapper(ToolManager):
 
 
   def build_peptides(self, structure):
-    # Biopython's PPBuilder.build_peptides assumes the first model has id == 0
-    # when given a Structure or Model.  Some PDBs preserve a non-zero MODEL
-    # number, causing KeyError.  Bypass the Structure/Model level entirely by
-    # iterating Chains and calling build_peptides on each Chain (level "C"),
-    # which has no model-id assumption.
-    first_model = next(iter(structure)) if structure.level == "S" else structure
+    # Biopython's PPBuilder.build_peptides assumes the first model has id == 0.
+    # Some PDBs preserve a non-zero MODEL number; bypass the model-id assumption
+    # by iterating Chains and calling build_peptides on each Chain (level "C").
+    # Also handle Structures with zero models (parser produced empty result) --
+    # return empty pp_list instead of letting StopIteration propagate (becomes
+    # RuntimeError in Py3.7+ via PEP 479 inside generators like joblib's).
+    if structure.level == "S":
+      if len(structure) == 0:
+        return []
+      first_model = next(iter(structure))
+    else:
+      first_model = structure
     pp_list = []
     for chain in first_model:
       pp_list.extend(self.ppb.build_peptides(chain, aa_only=False))
