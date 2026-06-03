@@ -153,7 +153,7 @@ def trainAndTestOneFold(trainData, testPrefixes, trainSubsetN, testPath, outputP
 
   from Config import Configuration
   conf = Configuration()
-  modelFname= os.path.join(conf.tmp, hashlib.md5("".join(sorted(testPrefixes))).hexdigest()+str(trainSubsetN)+"bipspi2.pckl")
+  modelFname= os.path.join(conf.tmp, hashlib.md5("".join(sorted(testPrefixes)).encode()).hexdigest()+str(trainSubsetN)+"bipspi2.pckl")  # Py3: md5 requires bytes
 
   resultsForEvaluation_list=[]
   if len(testPrefixesNotEvaluated) > 0 or len(testPrefixes) == 0:
