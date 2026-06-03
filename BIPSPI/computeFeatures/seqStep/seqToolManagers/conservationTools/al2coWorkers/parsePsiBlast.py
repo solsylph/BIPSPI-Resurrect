@@ -45,7 +45,11 @@ def parsePsiBlast( inputSeq, psiBlastOut, seqIdlowCut=30, seqIdUpCut=95, evalueL
       if psiBlastRound>0:
         if line.startswith(">"):
           qlen= len(querySeq.replace("-",""))
-          if (identity >= seqIdlowCut and  identity <= seqIdUpCut and evalue <= evalueLowCut and 
+          # Py2 silently treated `None >= int` as False; Py3 raises TypeError.
+          # Skip the validity check on the very first '>' line (no prior hit
+          # parsed yet) and any time the previous hit was incomplete.
+          if (identity is not None and evalue is not None and
+                  identity >= seqIdlowCut and  identity <= seqIdUpCut and evalue <= evalueLowCut and
                   qlen >= lengthlocut and   100.*qlen/inputSeqLen >= qfraclocut): #valid pairwise alig params
             target_full_id= targetId+"_%s_%s"%(targetStartNum, targetEndNum)
             targetInfo= {"querySeq":querySeq, "targetSeq":targetSeq, "targetStartNum":targetStartNum,
@@ -91,7 +95,8 @@ def parsePsiBlast( inputSeq, psiBlastOut, seqIdlowCut=30, seqIdUpCut=95, evalueL
             targetStartNum= min(int(lineArray[1]), targetStartNum)
             targetEndNum= max(int(lineArray[-1]), targetEndNum)
 
-  if (identity >= seqIdlowCut and  identity <= seqIdUpCut and evalue <= evalueLowCut and 
+  if (identity is not None and evalue is not None and
+          identity >= seqIdlowCut and  identity <= seqIdUpCut and evalue <= evalueLowCut and
           qlen >= lengthlocut and   100.*qlen/float(inputSeqLen) >= qfraclocut): #valid pairwise alig params
     target_full_id= targetId+"_%s_%s"%(targetStartNum, targetEndNum)
     targetInfo= {"querySeq":querySeq, "targetSeq":targetSeq, "targetStartNum":targetStartNum,
