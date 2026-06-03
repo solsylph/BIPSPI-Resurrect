@@ -222,7 +222,7 @@ class TrainAndTestWorker(Configuration):
         listOfResultsSummary+= self.recursive_computeOneFold( testIdxs, trainIdxs_list)
       
       summary= pd.concat(listOfResultsSummary, ignore_index=True)
-      means= summary.mean(axis=0)
+      means= summary.mean(axis=0, numeric_only=True)  # pandas 2.x: skip non-numeric columns explicitly
       summary= pd.concat([summary, summary.iloc[[-1]]], ignore_index=True)
       summary.iloc[-1, 0]=  "mean"
       summary.iloc[-1, 1:]=  means
