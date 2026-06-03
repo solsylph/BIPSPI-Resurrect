@@ -52,7 +52,9 @@ class SeqToolManager(ToolManager):
     winSizeStep= int(self.winSize/2)
     noAA_FeatsProfile= [ [featsDefault[i]]*len(exampleFeatsList[i]) for i in range(nFeats)] 
     resIds, feats= zip(* dataList )
-    list_of_profilesList= zip(* feats)
+    # Py3 zip returns an iterator; list_of_profilesList is later indexed with
+    # [featNum][i], so it must be materialised. (Py2 zip returned a list.)
+    list_of_profilesList= list(zip(* feats))
     resultsList=[]
     for resNum, full_resId  in enumerate(resIds):
       oneResProfile= [list(full_resId)]

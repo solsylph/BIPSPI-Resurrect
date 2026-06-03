@@ -3,9 +3,9 @@
 **Upstream:** [rsanchezgarc/BIPSPI](https://github.com/rsanchezgarc/BIPSPI) (Python 2.7)
 **Our fork:** [solsylph/BIPSPI-Resurrect](https://github.com/solsylph/BIPSPI-Resurrect)
 **Purpose:** sequence-mode resurrection on the ESMFold-multimer mmseqs2-clustered splits, as a non-RF baseline after the RF-on-ESM2 architectural ceiling was confirmed (pair-AUROC ~0.55 on test).
-**Last update:** 2026-06-03 (after Phase D interrupt + restart, canonical fetch complete, three rounds of runtime fixes landed).
+**Last update:** 2026-06-03 (Phase D complete, seq-mode smoke in progress).
 
-> **Repo layout:** GitHub repo has `BIPSPI/` as a subdirectory at its root (the local git repo was reinitialised at `E:\BIPSPI-Resurrect\` instead of `E:\BIPSPI-Resurrect\BIPSPI\`). On the cluster the code lives at `~/BIPSPI-Resurrect/BIPSPI/`. All commands assume `cd ~/BIPSPI-Resurrect/BIPSPI` first.
+> **Repo layout:** GitHub repo has `BIPSPI/` as a subdirectory at its root (local git repo was reinitialised at `E:\BIPSPI-Resurrect\` instead of `E:\BIPSPI-Resurrect\BIPSPI\`). On the cluster: `~/BIPSPI-Resurrect/BIPSPI/`. All commands assume `cd ~/BIPSPI-Resurrect/BIPSPI` first.
 
 ---
 
@@ -14,15 +14,15 @@
 | Phase | Subject | Status |
 |---|---|---|
 | Port | Py2.7 → Py3 mechanical port (21 files) | ✅ |
-| Critic | Two P0 regressions found + fixed (alignment truncation, empty-input crash) | ✅ |
+| Critic | Two P0 regressions found + fixed | ✅ |
 | A | Extend `protein` conda env + module-load BLAST+/CD-HIT | ✅ |
-| B | Build al2co + install clustalw 2.1 (via bioconda) | ✅ |
+| B | Build al2co + install clustalw 2.1 (bioconda) | ✅ |
 | Cfg patch | Update `dependencies.cfg` with cluster paths | ✅ |
 | C | Port SPIDER2 to Py3.10 (numpy-only, option a-i) | ✅ |
-| D | Download uniref90 + makeblastdb | ⏳ **restarting** (interrupted 2026-05-27; restarted 2026-06-03 ~13:11) |
-| Runtime fixes | Biopython 1.80 removals + Py2/Py3 gzip mode + gemmi 0.6 API | ✅ (3 rounds applied) |
+| **D** | **Download uniref90 + makeblastdb** | **✅ (2026-06-03)** |
+| Runtime fixes | 4 rounds of post-port whack-a-mole (Biopython 1.80, gzip mode, gemmi 0.6, BIPSPI default-arg bug) | ✅ |
 | Canonical data | Fetch BIPSPI's published training set (info_HEDt.tab + Benchmark 5 + RCSB) | ✅ (2610/2611 prepared) |
-| Smoke seq | `--modelType seq` against `./docs/trainingPDBsExample` | ⏳ blocked on Phase D |
+| Smoke seq | `--modelType seq` against `./docs/trainingPDBsExample` | ⏳ **psiblast running 2/6 chains done** |
 | Canonical run | Full 2611-complex BIPSPI seq training | blocked on smoke |
 | Re-baseline | Our splits + 07b-comparable evaluation | blocked on canonical run |
 
@@ -43,20 +43,15 @@
 | `pd.set_option('precision', N)` | 4 | `pd.set_option('display.precision', N)` |
 | `df.ix[]` + `df.append(..., ignore_index=True)` | 8 | `df.iloc[]` + `pd.concat([df, df.iloc[[-1]]], ignore_index=True)` |
 
-`python -m compileall .` passes for 122 of 123 files.  The 1 failure (`monitorScreenlog.py` line 28) is a **pre-existing source bug** that broke in Python 2.7 too — out of scope.
+`python -m compileall .` passes for 122 of 123 files. The 1 failure (`monitorScreenlog.py` line 28) is a pre-existing source bug — out of scope.
 
 ## 2. Critic/implementor pair-programming round (complete)
 
-After the mechanical port, a critic review found two correctness regressions:
+Two P0 regressions found and fixed:
+- **P0-1**: `PairwiseAligner` local mode returns TRUNCATED aligned strings; `pairwise2.align.localds` returned full-length with `-` padding. Downstream index-walking code was silently producing wrong residue mappings. Fixed via `_padded_local_alignment(seq1, seq2, alignment)` helper in all 4 alignment files.
+- **P0-2**: `aligner.align("", X)` raises `ValueError`; `pairwise2.align.localds("", X)` returned `[]`. Fixed via `if not seq0 or not seq1: return []` guard in `homoOligomerFixer._alignSeqs`.
 
-- **P0-1 (silent wrong residue mappings):** `PairwiseAligner` in local mode returns the aligned strings TRUNCATED to the local match region; `pairwise2.align.localds` returned the full input sequences with `-` padding outside the match. Downstream code walks the strings with `idx += 1` and indexes into the original polypeptide — truncation shifted those indices by the leading-context offset.
-- **P0-2 (crash on empty polypeptides):** `aligner.align("", X)` raises `ValueError`; `pairwise2.align.localds("", X)` returned `[]`. `homoOligomerFixer._alignSeqs` had a `if len(alignments)==0: continue` guard that no longer fired.
-
-Both fixed:
-- All 4 alignment files gained a module-level `_padded_local_alignment(seq1, seq2, alignment)` helper.
-- `homoOligomerFixer._alignSeqs` gained `if not seq0 or not seq1: return []` at the top.
-
-Byte-for-byte sanity check against legacy pairwise2 on `s1="PPPACDEFGHIKLMNQQQ", s2="ACDEFKLMN"` matched: `'PPPACDEFGHIKLMNQQQ'` / `'---ACDEF---KLMN---'`.
+Byte-for-byte sanity check against legacy pairwise2 passed.
 
 ---
 
@@ -65,19 +60,16 @@ Byte-for-byte sanity check against legacy pairwise2 on `s1="PPPACDEFGHIKLMNQQQ",
 **Cluster Python env**: `protein` (existing conda env at `~/miniforge3/envs/protein`).
 **Python version: 3.10.20**.
 
-**Packages installed:**
 ```bash
 conda install -n protein -c conda-forge -c bioconda \
     xgboost gemmi tqdm requests mmtf-python psutil joblib -y
 ```
 
-Versions on cluster:
-- xgboost **3.2.0** — see caveat below
-- biopython 1.86, pandas 2.3.3, numpy <2.0, gemmi (≥0.6)
+Versions: xgboost **3.2.0** (caveat below), biopython 1.86, pandas 2.3.3, numpy <2.0, gemmi (≥0.6).
 
-> **xgboost 3.2.0 caveat (still pending):** BIPSPI's `trainAndTest/classifiers/xgBoost.py` was written against xgboost 0.80 (2017). xgboost 3.x has substantial API changes. **Will almost certainly break at training time.** Either pre-empt with `conda install -n protein "xgboost>=1.7,<2.0" -y`, or patch `xgBoost.py` when it errors (per "fix later" scope).
+> **xgboost 3.2.0 caveat (still pending):** BIPSPI's `trainAndTest/classifiers/xgBoost.py` was written against xgboost 0.80 (2017). Will likely break at training time. Either pre-empt with `conda install -n protein "xgboost>=1.7,<2.0" -y` or patch when it errors.
 
-**Module loads** (must repeat in any fresh shell):
+**Module loads** (must repeat in every fresh shell):
 ```bash
 conda activate protein
 module load BLAST+/2.14.1-gompi-2023a
@@ -86,132 +78,103 @@ module load CD-HIT/4.8.1-GCC-12.2.0
 
 ## 4. Phase B — al2co + clustalw (complete)
 
-Built/installed via `tools/install_al2co_clustalw.sh`:
-- **clustalw 2.1** via bioconda at `~/miniforge3/envs/protein/bin/clustalw`
-- **al2co** from [TheApacheCats/al2co GitHub mirror](https://github.com/TheApacheCats/al2co) at `~/tools/al2co/al2co` (with the char[500]→char[1024] buffer patch)
+Via `tools/install_al2co_clustalw.sh`:
+- **clustalw 2.1** via bioconda → `~/miniforge3/envs/protein/bin/clustalw`
+- **al2co** from [TheApacheCats/al2co GitHub mirror](https://github.com/TheApacheCats/al2co) → `~/tools/al2co/al2co` (with char[500]→char[1024] buffer patch)
 
 ## 5. Phase B.5 — `dependencies.cfg` patcher (complete)
 
-`tools/patch_dependencies_cfg.sh` rewrote `configFiles/cmdTool/dependencies.cfg` with cluster-specific paths:
-```
-psiBlastBin       /cvmfs/.../BLAST+/2.14.1-gompi-2023a/bin/psiblast
-psiBlastDB_path   /home/biostruct01/databases/uniref90/uniref90.fasta
-cdHitBin_path     /cvmfs/.../CD-HIT/4.8.1-GCC-12.2.0/bin/cd-hit
-clustalW_path     /home/biostruct01/miniforge3/envs/protein/bin/clustalw
-al2coBin_path     /home/biostruct01/tools/al2co/al2co
-spider2PyScript_path /home/biostruct01/tools/SPIDER2/misc/pred_pssm.py
-```
+`tools/patch_dependencies_cfg.sh` rewrote cluster paths into `configFiles/cmdTool/dependencies.cfg`.
 
 ## 6. Phase C — SPIDER2 port (complete)
 
-**Decision taken: option a-i** (numpy-only rewrite). SPIDER2 source: `SPIDER2_local.tgz` from `http://183.36.5.251:8080/sparks_downloads/.../old_versions/SPIDER2_local.tgz` (Zhou lab successor site since Sparks Lab moved). Extracted to `~/tools/SPIDER2/`.
+**Option a-i** (numpy-only rewrite). Source from `http://183.36.5.251:8080/sparks_downloads/.../old_versions/SPIDER2_local.tgz`. Extracted to `~/tools/SPIDER2/`.
 
-**Key discovery**: `pred_pssm.py` is **already pure numpy** — no Theano needed. The "NN" is matrix multiplies + sigmoid, weights load via `numpy.load()` on bundled `.npz` files.
+Key: `pred_pssm.py` is **already pure numpy** — no Theano. `tools/port_spider2.sh` applied three Py2→Py3 edits:
+1. 3× `print >>fp, X` → `print(X, file=fp)`
+2. `numpy.load(f)` → `numpy.load(f, allow_pickle=True, encoding='latin1')` for Py2-pickled `.npz`
 
-Three Py2 → Py3 edits applied by `tools/port_spider2.sh`:
-1. **3× `print >>fp, X` → `print(X, file=fp)`**
-2. **`numpy.load(f)` → `numpy.load(f, allow_pickle=True, encoding='latin1')`** for Py2-pickled `.npz` files
+Validation: byte-match against bundled reference `1a1xA_CHECK.spd3`. ✅
 
-**Validation:** smoke test against bundled `SPIDER2/ex/1a1xA.pssm` produced `1a1xA.spd3` that byte-matches the reference `1a1xA_CHECK.spd3`.
+## 7. Phase D — uniref90 BLAST DB (complete 2026-06-03)
 
-## 7. Phase D — uniref90 BLAST DB (in progress, restarting)
+**Final state:** 84 GB raw FASTA + 23 BLAST volumes + `.pal` alias file at `~/databases/uniref90/uniref90.fasta`. 188 million sequences (66 billion residues) queryable. Total install: ~95 GB.
 
-**Status as of 2026-06-03:**
-- ✅ uniref90.fasta.gz downloaded (44 GB compressed)
-- ✅ gunzip'd to 84 GB FASTA at `~/databases/uniref90/uniref90.fasta`
-- ⚠️ `makeblastdb` first attempt started 2026-05-27 18:14, ran for 75 min, was interrupted at 19:28 when terminal closed mid-indexing of volume 19. Result: 19 of ~20 volumes complete, no `.pal` alias file → unusable.
-- ⏳ `makeblastdb` restarted 2026-06-03 13:11 inside tmux + srun. Overwrites existing volumes from scratch. ETA ~75 min from restart.
+**Took 3 attempts to get right:**
 
-Recovery procedure used:
+| Attempt | Result | Lesson |
+|---|---|---|
+| 2026-05-27 | Got to volume 19 of ~20 in 75 min, then **terminal closed without detaching from tmux** → process killed | `Ctrl-b d` to detach BEFORE closing any terminal |
+| 2026-06-03 #1 (with -hash_index + -parse_seqids, 16 GB mem) | OOM-killed almost immediately | -parse_seqids on UniRef90 needs >16 GB RAM; either bump mem or drop the flag |
+| 2026-06-03 #2 (dropped -parse_seqids, kept -hash_index, 64 GB mem) | `BLAST Database creation error: Duplicate seq_ids are found: GNL|BL_ORD_ID|835307` | -hash_index without -parse_seqids breaks ordinal-ID uniqueness check |
+| 2026-06-03 #3 (dropped both flags, 64 GB mem) | ✅ Completed in 35 min | Minimal makeblastdb invocation: `-in / -dbtype / -out` only |
+
+Final `tools/download_uniref90_db.sh` runs the bare minimum:
 ```bash
-tmux new -s uniref90_recovery
-srun --partition=cpu --cpus-per-task=4 --mem=16G --time=4:00:00 --pty bash -l
-conda activate protein
-module load BLAST+/2.14.1-gompi-2023a
-cd ~/databases/uniref90/
-rm -f uniref90.fasta.19.*               # partial volume
-rm -f uniref90.fasta.{pdb,ptf}-lock     # stale locks
-rm -f uniref90.fasta.{pdb,ptf,pal}      # partial stubs
-cd ~/BIPSPI-Resurrect/BIPSPI
-bash tools/download_uniref90_db.sh      # idempotent — skips already-downloaded fasta
-# Ctrl-b d to detach. THIS TIME don't close the terminal until detached.
+makeblastdb -in uniref90.fasta -dbtype prot -out uniref90.fasta
+```
+`-hash_index` is an optimisation, not a requirement; psiblast queries work fine without it. `-parse_seqids` is for `blastdbcmd` accession lookup, which BIPSPI doesn't use.
+
+**Verification (passed):**
+```
+PSIBLAST 2.14.1+
+Database: uniref90.fasta
+           188,848,220 sequences; 66,359,825,357 total letters
+Results from round 1
 ```
 
-When complete, verify with:
-```bash
-ls ~/databases/uniref90/uniref90.fasta.pal
-echo -e ">test\nMKQHKAMIVALIVICITAVVAALVTRKDLCEVHIRTGQTEVAVF" > /tmp/test.fa
-psiblast -query /tmp/test.fa -db ~/databases/uniref90/uniref90.fasta -num_iterations 1 -num_threads 4 -out /tmp/test.psiblast
-head -30 /tmp/test.psiblast
-```
-
-## 8. Runtime fixes (post-port whack-a-mole — three rounds, all applied)
-
-After Phase A-C done, ran `generateBIPSPIModel.py` against bundled example data. Errors surfaced one-by-one, each a small fix:
+## 8. Runtime fixes (post-port whack-a-mole — 4 rounds, all applied)
 
 ### Round 1: Biopython 1.80 removals (3 files)
-Biopython 1.80 removed `three_to_one` and `one_to_three` from `Bio.PDB.Polypeptide`. Patched with `IUPACData`-based shim functions in:
-- `computeFeatures/toolManagerGeneric.py` (uses both)
-- `pythonTools/extractSequences.py` (`three_to_one` only)
-- `evaluation/workers/showPymolPath.py` (`one_to_three` only)
-
-Shim preserves the original `KeyError`-on-unknown behavior that BIPSPI's `threeLetterAA_to_one` relies on for special-case mappings (MSE→M, PTR→T, etc.). `seq1`/`seq3` would silently swallow these to "X".
+Patched `three_to_one` / `one_to_three` with `IUPACData`-based shim functions in `computeFeatures/toolManagerGeneric.py`, `pythonTools/extractSequences.py`, `evaluation/workers/showPymolPath.py`. Shim preserves the `KeyError`-on-unknown behavior BIPSPI's `threeLetterAA_to_one` relies on for special-case mappings (MSE→M, PTR→T, etc.).
 
 ### Round 2: Py2/Py3 gzip mode mismatch (7 sites in 5 files)
-Py2 `gzip.open(name, "w")` accepted strings; Py3 defaults to binary mode and requires bytes. Patched explicit text mode (`"wt"` / `"rt"`) in:
-- `computeFeatures/toolManagerGeneric.py:243` (write)
-- `trainAndTest/resultsManager.py:329,367` (writes)
-- `computeFeatures/computeFeatsOneComplex.py:107,120` (read + write)
-- `utils.py:116,118` (reads — `openForReadingFnameOrGz` helper)
-- `pythonTools/myPDBParser.py:37` (read)
-- `patchDock/launchPatchDock.py:26` left alone — explicitly `"rb"` for a bytes copy, correct as-is.
+Py3 `gzip.open(...)` defaults to binary mode. Patched explicit text mode (`"wt"` / `"rt"`) in `toolManagerGeneric.py`, `resultsManager.py`, `computeFeatsOneComplex.py`, `utils.py`, `myPDBParser.py`. (`patchDock/launchPatchDock.py:26` left as `"rb"` — correct for binary copy.)
 
 ### Round 3: gemmi ≥0.6 API change in our adapters (2 files)
-gemmi renamed `Model.name` (str) → `Model.num` (int). Patched in:
-- `tools/fetch_bipspi_training_set.py`
-- `tools/prepare_bipspi_inputs.py`
+gemmi renamed `Model.name` (str) → `Model.num` (int). Patched in `tools/fetch_bipspi_training_set.py` and `tools/prepare_bipspi_inputs.py` to use `gemmi.Model(str(src_model.num))`.
 
-Both adapters now do `gemmi.Model(str(src_model.num))`.
+### Round 4 (NEW 2026-06-03): BIPSPI default-argument-evaluation bug
+**Pre-existing logic bug** (not Py2→Py3 specific): three function definitions in `generateBIPSPIModel.py` had `methodProtocol=conf.modelType` as a default argument. Python evaluates defaults at function-definition time, BEFORE `parse_args()` runs. So `--modelType seq` was silently ignored and BIPSPI always ran in the configFile default mode (`struct`), which then tried to invoke PSAIA.
 
-### Still pending (will surface in next runs)
-- `xgboost 0.80` → 3.x API at training time (callbacks, early stopping, etc.) — pre-empt with downgrade or patch on error.
-- `from Bio.PDB.Polypeptide import aa1` in `spider2Manager.py` and `Al2coManager.py` — `aa1` constant may also have been removed in 1.80 cleanup. Will likely error when seq feature pipeline runs.
+Fixed two ways for belt-and-braces:
+- `configFile.cfg`: changed default `modelType struct` → `modelType seq` (matches our actual use case)
+- `generateBIPSPIModel.py`: changed `computeFeatures`, `codifyStep`, `trainAndTest` to `methodProtocol=None` with `if X is None: X = conf.X` lookups inside the function bodies. CLI overrides now actually work.
 
-## 9. Canonical training data (NEW — assembled 2026-06-03)
+### Still pending (will surface in remaining runs)
+- `xgboost 0.80 → 3.2 API` at training step (`trainAndTest/classifiers/xgBoost.py`)
+- `from Bio.PDB.Polypeptide import aa1` in `spider2Manager.py` and `Al2coManager.py` — `aa1` may also have been removed in 1.80 cleanup
 
-Co-researcher provided `info_HEDt.tab` — BIPSPI's canonical training list with SCOPe-family cluster IDs for K-fold CV grouping:
+## 9. Canonical training data (assembled 2026-06-03)
+
+Co-researcher provided `info_HEDt.tab` — BIPSPI's canonical training list with SCOPe-family cluster IDs:
 - 228 uppercase entries (Protein Docking Benchmark 5 — evaluated test complexes)
 - 2403 lowercase entries (RCSB augmentation — training-only)
 - 5 columns: `pdbId chainIds1 chainIds2 scopes1 scopes2`
-- Located at `docs/info_HEDt.tab` in the repo
+- Stored at `docs/info_HEDt.tab`
 
 **Fetcher: `tools/fetch_bipspi_training_set.py`**
 - Parses info_HEDt.tab (tolerates header)
-- For uppercase entries: copies/symlinks 4-file BIPSPI bundle from `--benchmark5-dir`
-- For lowercase entries: parallel RCSB fetch + gemmi chain extraction + `_b → _u` symlinks
-- Writes: `pdbs/`, `info_HEDt.noheader.tab` (header stripped for `--scopeFamiliesFname`), `manifest.json`, `failed.txt`
+- Uppercase: copies/symlinks 4-file bundle from `--benchmark5-dir`
+- Lowercase: parallel RCSB fetch + gemmi chain extraction + `_b → _u` symlinks
+- Outputs: `pdbs/`, `info_HEDt.noheader.tab`, `manifest.json`, `failed.txt`
 - Idempotent + resumable
 
-**Benchmark 5.5** downloaded from `https://zlab.wenglab.org/benchmark/benchmark5.5.tgz` (45 MB), extracted to `~/benchmark5/benchmark5.5/structures/` (flat dir of `PDBID_{l,r}_{b,u}.pdb` files, BIPSPI's exact naming).
+**Benchmark 5.5** downloaded from `https://zlab.wenglab.org/benchmark/benchmark5.5.tgz` (45 MB), extracted to `~/benchmark5/benchmark5.5/structures/` (flat dir, BIPSPI's exact naming).
 
-**Full fetch run (2026-06-03):**
-- 228 Benchmark 5 entries: 100% (instant, local I/O)
-- 2403 RCSB entries: 2402/2403 in 3:13 min (1 failure: `4v4c` — yeast ribosome, too large for legacy PDB format, RCSB only serves it as mmCIF)
-- 2610 / 2611 unique complexes prepared (2631 input entries → 2611 unique pdb_ids; 20 duplicate IDs collapsed, matching BIPSPI's one-file-per-pdb convention)
-- Output: `~/bipspi_run/canonical/pdbs/` (~10,440 PDB files), `~/bipspi_run/canonical/info_HEDt.noheader.tab`
-
-The single failure (4v4c) is well within noise (0.04%). Not worth a `.cif` fallback for now.
+**Run results:**
+- 228 Benchmark 5 entries: 100% (instant)
+- 2403 RCSB: 2402/2403 in 3:13 min (1 failure: `4v4c` yeast ribosome — too large for legacy PDB format, RCSB only serves as mmCIF; 0.04% loss, ignored)
+- 2610/2611 unique complexes prepared (20 duplicate IDs collapsed per BIPSPI's one-file-per-pdb convention)
+- Output: `~/bipspi_run/canonical/pdbs/` (~10,440 PDB files)
 
 ---
 
-## 10. Two paths for the actual training
+## 10. Two paths for training
 
-### Path A (canonical — validate port reproduces published BIPSPI numbers)
-
-Uses the data the canonical fetcher produced. **Run this FIRST** — without confirming the port reproduces published numbers, any score we get on our splits is suspect.
+### Path A — canonical (run FIRST; validates port reproduces published BIPSPI numbers)
 
 ```bash
-# After Phase D + bundled-example smoke pass
 tmux new -s bipspi_canonical
 srun --partition=cpu --cpus-per-task=16 --mem=64G --time=12:00:00 --pty bash -l
 conda activate protein
@@ -224,16 +187,15 @@ python generateBIPSPIModel.py \
     --N_KFOLD 10 \
     --wdir ~/bipspi_run/canonical/wdir \
     --ncpu 16
-# Ctrl-b d to detach (this time DON'T close the terminal early)
+# Ctrl-b d to detach. THIS TIME do not close the terminal early.
 ```
-ETA: ~5-8 hours (dominated by 2611 × 2 chains × ~1.5 min psiblast queries against uniref90, parallelised across 16 cores).
+ETA: ~5-8 hours (dominated by 2611 × 2 chains × ~5 min psiblast queries against uniref90, parallelised across 16 cores).
 
-### Path B (our splits — apples-to-apples vs 07b RF)
+### Path B — our splits (vs 07b RF; runs after Path A validates the port)
 
-After Path A validates the port. Uses `tools/prepare_bipspi_inputs.py` to convert our existing `~/ESMFold-multimer/data/{splits,structures}/` into BIPSPI format. Single-fold `folds.json` via `--N_KFOLD` instead of `--scopeFamiliesFname`.
+Uses `tools/prepare_bipspi_inputs.py` against `~/ESMFold-multimer/data/{splits,structures}/`. Outputs single-fold `folds.json` for `--N_KFOLD`.
 
 ```bash
-# After Path A validated
 python tools/prepare_bipspi_inputs.py \
     --splits-dir ~/ESMFold-multimer/data/splits \
     --structures-dir ~/ESMFold-multimer/data/structures \
@@ -247,85 +209,86 @@ python generateBIPSPIModel.py \
     --ncpu 16
 ```
 
-### Open decisions
-- **Train+val vs train-only as training set:** adapter defaults to `train+val combined as training, test held out`.
-- **Metric harmonisation:** BIPSPI emits `auc_pair`, `prec_50/100/500`, `auc_l/r`, `mcc_l/r`. 07b emits `pair-AUROC/AUPRC`, `prec@L/L2/L5`, `site-AUROC/F1/MCC`. Cleanest comparable: run 07b's evaluator over BIPSPI's per-complex `prefix.tab.res.gz` outputs. Defer until smoke passes.
-
 ---
 
-## 11. Reusable inputs from the ESMFold-multimer pipeline (for Path B)
+## 11. Cluster details + lessons learned
 
-| Pipeline artifact | Used by BIPSPI? | How |
-|---|---|---|
-| `~/ESMFold-multimer/data/splits/{train,val,test}.json` | Yes | Read directly by `tools/prepare_bipspi_inputs.py` |
-| `~/ESMFold-multimer/data/structures/{PDB}_assembly1.cif` | Yes (with conversion) | Adapter extracts chain_a and chain_b as separate PDBs using gemmi |
-| `~/ESMFold-multimer/data/labels/*_assembly1.json` | No | BIPSPI computes its own contact maps from the bound PDB |
-| `~/ESMFold-multimer/data/cached/esm2.zarr` | No | BIPSPI uses PSI-BLAST PSSMs, not ESM2 embeddings |
+- **Login**: `ssh biostruct01@10.205.10.23` (VPN-in-WSL required). Nodes `haskell` + `rust` share `/home`.
+- **No sbatch** for regular users. Long jobs need `srun --pty bash -l` inside `tmux`.
+- **`Ctrl-b d` to detach tmux** BEFORE closing any terminal. **Cost us 75 min of makeblastdb work on the first Phase D attempt.**
+- **`/tmp` is node-local**, NOT shared. If you `--wdir /tmp/X` on node A you can't see it from node B. **Always use `~/...` paths** for cross-node visibility (the makeblastdb artefacts live in `~/databases/` for this reason). Adapter outputs also use `~/bipspi_run/...`.
+- **SSH between compute nodes works** (`ssh haskell` from `rust` prompted for password and connected) — useful for monitoring a long job from a second terminal.
+- **Module loads don't persist** across SSH sessions. Re-issue `module load BLAST+/...` and `CD-HIT/...` in every new shell.
 
----
-
-## 12. Cluster details
-
-- **Login**: `ssh biostruct01@10.205.10.23` (VPN-in-WSL required)
-- **Nodes**: `haskell`, `rust` (sibling nodes sharing `/home`)
-- **No sbatch** for regular users. Long jobs need `srun --pty bash -l` wrapped in `tmux`.
-- **Critical lesson learned 2026-06-03:** `Ctrl-b d` to detach tmux BEFORE closing any terminal. The first Phase D attempt was killed because the terminal was closed without detaching, losing 75 min of makeblastdb progress.
-
-## 13. Files at a glance
+## 12. Files at a glance
 
 ```
 ~/BIPSPI-Resurrect/BIPSPI/                       (cluster)
 E:\BIPSPI-Resurrect\BIPSPI\                      (local Windows)
 ├── STATUS.md                          <- this file
 ├── bipspi_py3_environ.yml             <- Python 3 conda env spec (reference; we extended `protein` instead)
-├── bipspi_plus_environ.yml            <- ORIGINAL Py2.7 env (kept for reference)
+├── bipspi_plus_environ.yml            <- ORIGINAL Py2.7 env (reference)
 ├── tools/
 │   ├── prepare_bipspi_inputs.py       <- our-splits → BIPSPI pdbsIndir (Path B adapter)
 │   ├── fetch_bipspi_training_set.py   <- info_HEDt.tab → BIPSPI pdbsIndir (Path A canonical fetcher)
 │   ├── check_cluster_deps.sh          <- haskell dep probe (already run)
 │   ├── install_al2co_clustalw.sh      <- Phase B installer (already run, idempotent)
 │   ├── patch_dependencies_cfg.sh      <- cfg path patcher (already run, idempotent)
-│   ├── download_uniref90_db.sh        <- Phase D downloader (restarting in tmux now)
+│   ├── download_uniref90_db.sh        <- Phase D downloader (run successfully 2026-06-03)
 │   └── port_spider2.sh                <- Phase C SPIDER2 patcher (already run, idempotent)
 ├── docs/
 │   ├── info_HEDt.tab                  <- canonical BIPSPI training list (2631 entries with scopes)
 │   ├── scopes_example.tab             <- BIPSPI's 2-complex bundled example
 │   └── trainingPDBsExample/           <- BIPSPI's 2-complex bundled PDBs
 ├── configFiles/cmdTool/
-│   └── dependencies.cfg               <- PATCHED with cluster paths (backup at dependencies.cfg.bak.*)
+│   ├── configFile.cfg                 <- PATCHED: modelType seq (was struct)
+│   └── dependencies.cfg               <- PATCHED with cluster paths
+├── generateBIPSPIModel.py             <- PATCHED: default-arg eval bug for --modelType CLI overrides
 ├── Config.py                          <- PORTED
-├── generateBIPSPIModel.py             <- (unchanged top-level entry)
 ├── predictComplexes.py                <- PORTED
 ├── monitorScreenlog.py                <- PORTED (with one pre-existing parse error left intact)
 ├── computeFeatures/
 │   ├── toolManagerGeneric.py          <- PORTED + three_to_one/one_to_three shim + gzip mode fix
 │   ├── computeFeatsOneComplex.py      <- gzip mode fix
 │   └── common/{boundUnboundMapper,homoOligomerFixer}.py    <- PORTED + critic P0-1/P0-2 fixes
-├── codifyComplexes/
-│   ├── codifyProtocols/DataLoaderClass.py     <- PORTED
-│   └── codifyProtocols/SeqProtocol.py         <- (unchanged)
+├── codifyComplexes/                   <- PORTED
 ├── trainAndTest/
-│   ├── trainAndTest.py                        <- PORTED
-│   ├── resultsManager.py                      <- PORTED + gzip mode fix
-│   └── evaluateResults.py                     <- PORTED
+│   ├── trainAndTest.py                <- PORTED
+│   ├── resultsManager.py              <- PORTED + gzip mode fix
+│   └── evaluateResults.py             <- PORTED
 ├── pythonTools/
-│   ├── alignSequences.py                      <- PORTED + critic P0-1 fix
-│   ├── extractSequences.py                    <- + three_to_one shim
-│   ├── extractModelsFromPdbFile.py            <- PORTED
-│   ├── combinePDBs.py                         <- PORTED
-│   └── myPDBParser.py                         <- gzip mode fix
-├── utils.py                                   <- gzip mode fix (openForReadingFnameOrGz)
-└── evaluation/                                <- 6 files PORTED (.ix/.append idiom)
-    └── workers/showPymolPath.py               <- + one_to_three shim
+│   ├── alignSequences.py              <- PORTED + critic P0-1 fix
+│   ├── extractSequences.py            <- + three_to_one shim
+│   ├── extractModelsFromPdbFile.py    <- PORTED
+│   ├── combinePDBs.py                 <- PORTED
+│   └── myPDBParser.py                 <- gzip mode fix
+├── utils.py                           <- gzip mode fix
+└── evaluation/                        <- 6 files PORTED (.ix/.append idiom)
+    └── workers/showPymolPath.py       <- + one_to_three shim
 
 External (on cluster, NOT in this repo):
-~/tools/al2co/al2co                            <- al2co binary (Phase B)
-~/tools/SPIDER2/                               <- SPIDER2 source + .npz weights (Phase C)
-~/tools/SPIDER2/misc/pred_pssm.py              <- PORTED via tools/port_spider2.sh
-~/databases/uniref90/uniref90.fasta            <- 84 GB raw FASTA + BLAST DB (Phase D restarting)
-~/miniforge3/envs/protein/                     <- conda env (Phase A extended)
-~/benchmark5/benchmark5.5/structures/          <- Benchmark 5.5 PDBs (Path A data, 228 complexes × 4 files)
-~/bipspi_run/canonical/                        <- canonical Path A inputs ready (2610 complexes)
+~/tools/al2co/al2co                    <- al2co binary (Phase B)
+~/tools/SPIDER2/                       <- SPIDER2 source + .npz weights (Phase C)
+~/tools/SPIDER2/misc/pred_pssm.py      <- PORTED via tools/port_spider2.sh
+~/databases/uniref90/uniref90.fasta    <- 84 GB raw FASTA + 23 BLAST volumes + .pal (Phase D)
+~/miniforge3/envs/protein/             <- conda env (Phase A extended)
+~/benchmark5/benchmark5.5/structures/  <- Benchmark 5.5 PDBs (Path A data)
+~/bipspi_run/canonical/                <- canonical Path A inputs ready (2610 complexes)
 ```
 
 `git diff HEAD` shows every line of the port relative to upstream.
+
+---
+
+## 13. Current activity (live)
+
+**As of 2026-06-03 ~15:30**: seq-mode bundled-example smoke test running on haskell, inside tmux+srun.
+- Phase D verified ✅ (188M-sequence DB queried successfully)
+- Contact maps written ✅
+- structComputer correctly skipped ✅ (after Round-4 fix)
+- psiblast PSSMs: 2 of 6 chains done (~5 min each at ncpu=2)
+- Pending stages: al2co, SPIDER2, codification, xgboost training
+
+Next likely failure: `aa1` import in `spider2Manager.py` / `Al2coManager.py` (Biopython 1.80 removal), OR `xgboost 3.x` API at training step. Each a small targeted patch.
+
+If smoke completes successfully → fire Path A canonical run in fresh tmux+srun, walks itself overnight.
