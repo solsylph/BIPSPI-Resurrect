@@ -55,11 +55,16 @@ conf= Configuration()
 
 USE_2_STEPS= True
 
-def computeFeatures(methodProtocol= conf.modelType, isHomeSet= conf.checkHomoInteractionInTraining):
+def computeFeatures(methodProtocol=None, isHomeSet=None):
+  # Look up conf at CALL time, not def time -- otherwise CLI overrides are
+  # ignored because conf.modelType is captured before parse_args runs.
+  if methodProtocol is None: methodProtocol = conf.modelType
+  if isHomeSet is None:      isHomeSet      = conf.checkHomoInteractionInTraining
   pComCode.computeFeaturesAllPdbsOneDir(ncpu= 1+ conf.ncpu//conf.psiBlastNThrs, methodProtocol= methodProtocol, isHomeSet=isHomeSet)
 
-def codifyStep(methodProtocol= conf.modelType, feedbackPaths=None):
-  benchCod= pCodifyAll.BenchmarkCodificator( feedback_paths= feedbackPaths, environType=methodProtocol, 
+def codifyStep(methodProtocol=None, feedbackPaths=None):
+  if methodProtocol is None: methodProtocol = conf.modelType
+  benchCod= pCodifyAll.BenchmarkCodificator( feedback_paths= feedbackPaths, environType=methodProtocol,
                                              ncpu=min( int(1+ checkFreeMemory()//GiB_PER_PROC), conf.ncpu), overridePrevComp= False)
   if not benchCod.checkIfAllCodified():
   #  skipComplexesList= benchCod.prefixes[4:]
@@ -69,8 +74,9 @@ def codifyStep(methodProtocol= conf.modelType, feedbackPaths=None):
     codifiedPath= benchCod.getCodifiedPath()
     print("All complexes already codified")
   return codifiedPath
-  
-def trainAndTest(inputRoot, outputRoot, methodProtocol= conf.modelType, saveModelPath= None, isLastStep=False):
+
+def trainAndTest(inputRoot, outputRoot, methodProtocol=None, saveModelPath= None, isLastStep=False):
+  if methodProtocol is None: methodProtocol = conf.modelType
 
   sampledComplexesPath= os.path.join(inputRoot, "sampledInputs")
   wholeComplexesPath= os.path.join(inputRoot, "allInputs")
