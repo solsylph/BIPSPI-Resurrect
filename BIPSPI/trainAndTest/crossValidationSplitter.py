@@ -17,13 +17,17 @@ def subSplitFolds(trainPrefixes_testPrefixes_list, prefixes, random_state=None):
     current_groups=  [ groups[trainPrefix] for trainPrefix in trainPrefixes]
     # Py3: cap sub-folds to available groups (example data may have fewer scope groups than N_SUB_FOLDS)
     n_sub = min(N_SUB_FOLDS, len(set(current_groups)))
-    try:
-      splits= list( GroupKFold(n_sub).split(trainPrefixes, groups= current_groups))
-    except ValueError as e:
-      msg = (" Error, the PARAM N_SUB_FOLDS is larger than the different groups  contained in the train split "+
-            "%s. This training fold should be enriched with additional training classes or the number of folds increased. Groups %s"%(str(trainPrefixes),
-                                                                                                     str(current_groups)))
-      raise ValueError(str(e) + msg)  # Py2->Py3: e.message -> str(e)
+    if n_sub < 2:
+      # Only 1 group — GroupKFold requires n_splits>=2; use all training data as a single sub-fold
+      splits = [(list(range(len(trainPrefixes))), [])]
+    else:
+      try:
+        splits= list( GroupKFold(n_sub).split(trainPrefixes, groups= current_groups))
+      except ValueError as e:
+        msg = (" Error, the PARAM N_SUB_FOLDS is larger than the different groups  contained in the train split "+
+              "%s. This training fold should be enriched with additional training classes or the number of folds increased. Groups %s"%(str(trainPrefixes),
+                                                                                                       str(current_groups)))
+        raise ValueError(str(e) + msg)  # Py2->Py3: e.message -> str(e)
     for (idxList_i, __) in splits:
       trainPrefixes_subset= getItemsFromList(idxList_i, trainPrefixes)
       trainIdxs_subset= [ prefixes.index(prefix) for prefix in  trainPrefixes_subset]
