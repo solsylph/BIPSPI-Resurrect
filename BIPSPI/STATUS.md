@@ -163,9 +163,25 @@ Fixed two ways for belt-and-braces:
 ### Round 10 (2026-06-03): empty alignment table in build_correspondence
 **`boundUnboundMapper.build_correspondence` called `np.max(aligU2BScores)` on a potentially zero-size array** (when bound or unbound chain list was empty due to malformed PDB). Fix: early return when `aligU2BScores.size == 0`. Makes the run resilient to per-complex data quality issues; downstream treats empty `boundToUnboundDict` as "no correspondence".
 
-### Bundled-data quality issues discovered
-- `2c1o_l_u.pdb` and `2c1o_r_u.pdb` in `./docs/trainingPDBsExample/` were **12-byte placeholders** containing just the text `"2c1o_l_b.pdb"` (intended-but-malformed symlinks). Replaced with proper `ln -s _b.pdb _u.pdb` symlinks per BIPSPI's documented convention.
-- `2v6x` likely has the same issue — same per-complex fix applies.
+### Bundled-data quality issues discovered + fix-up script
+Several `*_u.pdb` files in `./docs/trainingPDBsExample/` are **12-byte placeholders** containing just the text `"<prefix>_<l|r>_b.pdb"` instead of being proper symlinks. Biopython's PDBParser sees zero atoms and returns an empty Structure → contact-map and bound/unbound mapping crash downstream.
+
+Confirmed affected: **2c1o, 2v6x**. Likely others in the bundled dir; same pattern may appear in real Protein Docking Benchmark entries fetched from elsewhere.
+
+**Fix-up script** `tools/fix_bundled_data_stubs.sh` finds every `*_u.pdb` under 100 bytes in a given directory and replaces it with a proper `ln -s <prefix>_<l|r>_b.pdb <prefix>_<l|r>_u.pdb` symlink, matching BIPSPI's documented convention (`docs/repo_help.md`). Idempotent.
+
+```bash
+# preemptive sweep on the bundled example dir:
+bash tools/fix_bundled_data_stubs.sh
+# or on any directory:
+bash tools/fix_bundled_data_stubs.sh /path/to/pdbsIndir
+# script will also print the cache-cleanup commands you may want to run
+# afterwards if you're re-using an existing wdir.
+```
+
+**Note:** these are runtime modifications to the local filesystem on the cluster — they're **not** committed to git (would diverge from BIPSPI upstream). Re-run the fix-up script after any fresh clone or after pulling new bundled data.
+
+Also, **`computeFeatures/common/boundUnboundMapper.py:build_correspondence`** has an empty-array guard (Round 10 above), so even without the fix-up script, malformed complexes now skip gracefully instead of crashing the whole batch. The script is the proactive solution; the guard is the safety net.
 
 ### Still pending (will surface in remaining runs)
 - `xgboost 0.80 → 3.2 API` at training step (`trainAndTest/classifiers/xgBoost.py`)
@@ -308,13 +324,23 @@ External (on cluster, NOT in this repo):
 
 ## 13. Current activity (live)
 
-**As of 2026-06-03 ~15:30**: seq-mode bundled-example smoke test running on haskell, inside tmux+srun.
-- Phase D verified ✅ (188M-sequence DB queried successfully)
-- Contact maps written ✅
-- structComputer correctly skipped ✅ (after Round-4 fix)
-- psiblast PSSMs: 2 of 6 chains done (~5 min each at ncpu=2)
-- Pending stages: al2co, SPIDER2, codification, xgboost training
+**As of 2026-06-03 ~19:30**: seq-mode bundled-example smoke test running on haskell. Iterating through the ~5-6 complexes in `./docs/trainingPDBsExample/`. Phase D fully verified (188 M sequences queryable via psiblast).
 
-Next likely failure: `aa1` import in `spider2Manager.py` / `Al2coManager.py` (Biopython 1.80 removal), OR `xgboost 3.x` API at training step. Each a small targeted patch.
+**Stages done end-to-end** for 1A2K, 1AHW, 1ACB, 2c1o, partial 1ACB-2nd-chain:
+- contact maps
+- bound/unbound mapping (with build_peptides chain-iter fix)
+- psiblast PSSMs (cached in wdir, ~5 min each first time, instant on resume)
+- winSeq
+- al2co (with clustalw 2.1 header rewrite)
+- SPIDER2 (the "Error computing spider2" message is cosmetic — it's just numpy DeprecationWarning on stderr; .spd3 files are produced correctly)
 
-If smoke completes successfully → fire Path A canonical run in fresh tmux+srun, walks itself overnight.
+**Currently hitting**: bundled-data quality issues. Two complexes (`2c1o`, `2v6x`) shipped with 12-byte placeholder `_u.pdb` files instead of real symlinks. `2c1o` fixed manually (Round 10 + ln -s). `2v6x` either fixed or about to be via `tools/fix_bundled_data_stubs.sh`. `build_correspondence` empty-array guard catches anything we miss.
+
+**Likely-final remaining failure**: `xgboost 0.80 → 3.2 API` gap in `trainAndTest/classifiers/xgBoost.py` at the training step. Won't surface until all complexes' feature pipelines complete and codification finishes. Confirmed NOT issues: `aa1` import (still works in Biopython 1.86), seq-feature pipeline (proven working on 5 chains).
+
+**Once smoke completes**: fire Path A canonical run in fresh tmux+srun, ~5-8 hr overnight. Then Path B against our splits.
+
+### Quick handoff for a fresh chat
+1. Open Claude Code with CWD = `E:\BIPSPI-Resurrect\BIPSPI\`
+2. Prompt: "Read STATUS.md. We're mid-smoke-test on haskell. Last error / state was [paste]. Resume."
+3. STATUS.md is the single source of truth for the port + cluster setup. No other files required to continue.
