@@ -54,15 +54,17 @@ fi
 # 3. Compile BLAST DB
 # ---------------------------------------------------------------------------
 if [ ! -f "${FASTA}.pal" ] && [ ! -f "${FASTA}.phr" ]; then
-  echo "=== Compiling BLAST DB (makeblastdb, ~30-60 min) ==="
+  echo "=== Compiling BLAST DB (makeblastdb, ~60-90 min) ==="
   # -hash_index speeds up psiblast lookups.
-  # -parse_seqids lets us fetch sequences by accession later if needed.
+  # Dropped -parse_seqids: it builds extra seq-ID indexes that significantly
+  # increase memory usage during makeblastdb. Only needed for blastdbcmd-style
+  # accession lookups, which BIPSPI does not do. psiblast queries work fine
+  # without it.
   makeblastdb \
     -in "$FASTA" \
     -dbtype prot \
     -out "$FASTA" \
-    -hash_index \
-    -parse_seqids
+    -hash_index
 fi
 
 echo ""
