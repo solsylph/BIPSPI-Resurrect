@@ -52,9 +52,17 @@ class ContactMapper(ToolManager):
 
 
   def build_peptides(self, structure):
-    pp_list= self.ppb.build_peptides(structure, aa_only= False)      
+    # Biopython's PPBuilder.build_peptides does `entity[0]` on a Structure,
+    # which assumes model id == 0. Some PDBs have model id != 0 (e.g. some
+    # NMR entries, or PDBs preserving the original MODEL number) and raise
+    # KeyError. Pass the first available model directly to dodge this.
+    if structure.level == "S" and len(structure) > 0:
+      target = next(iter(structure))   # first Model, regardless of id
+    else:
+      target = structure
+    pp_list= self.ppb.build_peptides(target, aa_only= False)
     if len(pp_list)==0: #case of failure
-      pp_list= CaPPBuilder().build_peptides(structure, aa_only= False)
+      pp_list= CaPPBuilder().build_peptides(target, aa_only= False)
     return pp_list
     
   def mapBoundToUnbound(self, structureUnbound, structureBound, skipBoundChainsIds=set([])):
