@@ -25,6 +25,7 @@ def trainMethod(trainData, trainLabels, verboseLevel=0, ncpu= 1, useGpu=USE_GPU)
     print("WARNING: DEBUG MODE ")
   print(params)
   modelo= xgb.XGBClassifier( **params)
+  trainLabels= (np.asarray(trainLabels) > 0).astype(np.float32)  # xgboost 3.x binary:logistic requires {0,1} not {-1,1}
   modelo.fit(trainData, trainLabels)
   return modelo
 
