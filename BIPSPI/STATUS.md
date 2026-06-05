@@ -23,7 +23,7 @@
 | Runtime fixes | **16 rounds of post-port whack-a-mole** (Rounds 1-10 see below + Rounds 11-16: GroupKFold n_sub<2, md5 encode, zip subscript, pandas numeric_only, xgboost label encoding, mergeSplitFolds fallback) | ✅ |
 | Canonical data | Fetch BIPSPI's published training set (info_HEDt.tab + Benchmark 5 + RCSB) | ✅ (2610/2611 prepared) |
 | Smoke seq | `--modelType seq` against `./docs/trainingPDBsExample` | ✅ **Complete 2026-06-03. Both seq + seq_2 stages trained and evaluated. 6 complexes, 16 rounds of fixes.** |
-| Canonical run | Full 2611-complex BIPSPI seq training | ⏳ ready to launch |
+| Canonical run | Full 2611-complex BIPSPI seq training | ⏳ **RUNNING** (2026-06-04, restarted with 128 CPUs after 16-CPU run was too slow; ~15 hr ETA for features) |
 | Re-baseline | Our splits + 07b-comparable evaluation | blocked on canonical run |
 
 ---
@@ -344,29 +344,43 @@ External (on cluster, NOT in this repo):
 
 **As of 2026-06-03**: **Smoke test COMPLETE.** 16 rounds of runtime fixes total (Rounds 1-10 feature pipeline; Rounds 11-16 training pipeline). Both seq and seq_2 stages ran end-to-end on the 6-complex bundled example. Results produced (auc_pair ~0.61 stage-1, ~0.59 stage-2 — meaningless for 6 toy complexes, proves the pipeline runs). Models saved at `/tmp/test_bipspi_seq_v2/modelsComputed/`.
 
-**Ready to launch Path A canonical run** (2610 complexes, N_KFOLD=10, 16 CPUs). ETA: 24-72 hours dominated by psiblast (~15-30 min per chain against uniref90, 8 parallel at 16 CPUs/2 threads). The earlier 5-8 hr estimate was too optimistic; budget `--time=72:00:00`.
+**As of 2026-06-04**: **Path A canonical run LIVE** on haskell in `tmux attach -t bipspi_canonical`.
 
-**Path A launch** (from existing 72-hr srun on haskell):
+First attempt ran with 16 CPUs (8 parallel psiblasts) — projected ~13 days, too slow. Killed after ~12 hours (~234 chains cached). Restarted with 128 CPUs (64 parallel psiblasts) and 7-day time limit.
+
+Current srun:
 ```bash
-tmux new -s bipspi_canonical
-# inside tmux:
-conda activate protein
-module load BLAST+/2.14.1-gompi-2023a
-module load CD-HIT/4.8.1-GCC-12.2.0
-cd ~/BIPSPI-Resurrect/BIPSPI
-python generateBIPSPIModel.py \
-    --modelType seq \
-    --pdbsIndir ~/bipspi_run/canonical/pdbs \
-    --scopeFamiliesFname ~/bipspi_run/canonical/info_HEDt.noheader.tab \
-    --N_KFOLD 10 \
-    --wdir ~/bipspi_run/canonical/wdir \
-    --ncpu 16
-# Ctrl-b d to detach. Do NOT close terminal without detaching first.
+srun --partition=cpu --cpus-per-task=128 --mem=128G --time=7-00:00:00 --pty bash -l
 ```
 
-**After canonical run**: check auc_pair against BIPSPI published numbers (~0.72 on Benchmark 5), then fire Path B.
+**ETA**: ~15 hours for feature computation (128 CPUs = 64 parallel psiblasts, ~5800 remaining chains). Training after that. All previously computed chains (~234) are cached and will be skipped.
+
+**To check progress**:
+```bash
+DONE=$(ls ~/bipspi_run/canonical/wdir/computedFeatures/common/contactMaps/*.cMap.tab.gz 2>/dev/null | wc -l)
+echo "$DONE / 2610 ($(( DONE * 100 / 2610 ))%)"
+```
+
+When you see `All features computed for: 2610` the slow part is done.
+
+**After canonical run**: check auc_pair on the Benchmark 5 uppercase complexes against BIPSPI's published ~0.72, then fire Path B.
+
+**Path B** (our mmseqs2 splits vs 07b RF — runs after canonical validates the port):
+```bash
+python tools/prepare_bipspi_inputs.py \
+    --splits-dir ~/ESMFold-multimer/data/splits \
+    --structures-dir ~/ESMFold-multimer/data/structures \
+    --output-dir ~/bipspi_run/our_splits \
+    --evaluate test
+python generateBIPSPIModel.py \
+    --modelType seq \
+    --pdbsIndir ~/bipspi_run/our_splits/pdbs \
+    --N_KFOLD ~/bipspi_run/our_splits/folds.json \
+    --wdir ~/bipspi_run/our_splits/wdir \
+    --ncpu 16
+```
 
 ### Quick handoff for a fresh chat
 1. Open Claude Code with CWD = `E:\BIPSPI-Resurrect\BIPSPI\`
-2. Prompt: "Read STATUS.md. Smoke complete, canonical run [running/done]. Last output: [paste]."
+2. Prompt: "Read STATUS.md. Canonical run in progress / done. Last output: [paste]."
 3. STATUS.md is the single source of truth. No other files required.
