@@ -128,6 +128,8 @@ class DataLoader(Configuration):
       resultDF_list.append( df )
 
 
+    if not resultDF_list:  # Py3: guard empty list before pd.concat (missing/empty feature files)
+      raise ValueError("No feature data loaded for files: %s" % str(fnamesList))
     df= pd.concat(resultDF_list)
     assert df.shape[0]> 1, "Error loading files %s there are no rows"%str(fnamesList)
     return df

@@ -278,7 +278,13 @@ def launchCodifyOneComplex( funArgs ):
 
   builderArgs= funArgs[1:]
   print ("Working on complex %s"%funArgs[0])
-  OneComplexCodifier( *builderArgs).codifyComplex(prefix)
+  try:
+    OneComplexCodifier( *builderArgs).codifyComplex(prefix)
+  except Exception as e:
+    # Skip complexes with incomplete/missing features rather than crashing the batch
+    import warnings
+    warnings.warn("Skipping complex %s during codification: %s" % (prefix, e))
+    return None
   return 0              
     
 if __name__=="__main__":
