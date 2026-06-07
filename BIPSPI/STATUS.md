@@ -3,7 +3,7 @@
 **Upstream:** [rsanchezgarc/BIPSPI](https://github.com/rsanchezgarc/BIPSPI) (Python 2.7)
 **Our fork:** [solsylph/BIPSPI-Resurrect](https://github.com/solsylph/BIPSPI-Resurrect)
 **Purpose:** sequence-mode resurrection on the ESMFold-multimer mmseqs2-clustered splits, as a non-RF baseline after the RF-on-ESM2 architectural ceiling was confirmed (pair-AUROC ~0.55 on test).
-**Last update:** 2026-06-03 (Phase D complete, seq-mode smoke in progress).
+**Last update:** 2026-06-07 (Round 19 applied — corrupt joblib pickle skip).
 
 > **Repo layout:** GitHub repo has `BIPSPI/` as a subdirectory at its root (local git repo was reinitialised at `E:\BIPSPI-Resurrect\` instead of `E:\BIPSPI-Resurrect\BIPSPI\`). On the cluster: `~/BIPSPI-Resurrect/BIPSPI/`. All commands assume `cd ~/BIPSPI-Resurrect/BIPSPI` first.
 
@@ -200,6 +200,15 @@ Also, **`computeFeatures/common/boundUnboundMapper.py:build_correspondence`** ha
 
 ### Round 16 (2026-06-03): mergeSplitFolds stage-2 orthogonality fallback
 **With 6 example complexes and N_KFOLD=2, every stage-1 prediction was made by a model trained on exactly the stage-2 test set — orthogonality is mathematically impossible.** Added a fallback in `mergeSplitFolds`: when `trainPrefixes_idx` is empty, warn and use all stage-1 predictions for training complexes regardless of overlap. Raises only if still empty after fallback. Canonical run (2610 complexes, N_KFOLD=10) never hits this path.
+
+### Round 17 (2026-06-04): pd.concat([]) guard in DataLoaderClass + codification skip
+**`pd.concat([])` raises `ValueError: No objects to concatenate` in pandas 2.x** when a complex has no loadable feature files (e.g., al2co emits "No alignments read" for very short chains). Two fixes: (a) guard in `codifyComplexes/codifyProtocols/DataLoaderClass.py` — raise `ValueError` before concat if `resultDF_list` is empty; (b) wrap `launchCodifyOneComplex` body in try-except to skip and warn instead of crashing the whole batch.
+
+### Round 18 (2026-06-04): getScopeGroups skips short lines
+**`info_reduced.tab` had two lines with an empty `chainIds2` field (double tab → only 4 tokens on split).** Caused `ValueError: not enough values to unpack (expected 5, got 4)` in `loadFromTable`. Fix: skip lines with `len(lineArray) < 5` with a warning in `trainAndTest/getScopeGroups.py`. (The two offending lines were duplicate entries for 1OYV and 1QFW; valid entries exist on adjacent lines.)
+
+### Round 19 (2026-06-07): corrupt joblib pickle skip in predictOnePrefix
+**A joblib pickle for a test complex was truncated** (written incompletely when a previous run was killed mid-write), causing `ValueError: EOF: reading array data, expected 262144 bytes got 52928` in `getDataForTestFromPrefix`. Fix: `predictOnePrefix` now delegates to `_predictOnePrefixInner` and wraps it in try-except, returning `None` on failure with a warning. Caller (`trainAndTestOneFold`) filters `None` values from `resultsForEvaluation_list` before processing. Consistent with Round 17 pattern in `launchCodifyOneComplex`. Corrupt complexes are skipped and evaluation continues.
 
 ### Confirmed NOT issues
 - `from Bio.PDB.Polypeptide import aa1` still works in Biopython 1.86.

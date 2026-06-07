@@ -182,6 +182,7 @@ def trainAndTestOneFold(trainData, testPrefixes, trainSubsetN, testPath, outputP
     resultsForEvaluation_list= Parallel(n_jobs=nJobs)(delayed(predictOnePrefix)(originalTestPrefixToNewPrefix[testPrefix],
                                                                       modelo, outName, testPath)
                                       for testPrefix, outName in testPrefixesNotEvaluated )
+    resultsForEvaluation_list = [r for r in resultsForEvaluation_list if r is not None]  # Py3: skip corrupt/failed pickles
     gc.collect()
 
   expectedSize= estimateRequiredMemoryPerComplex(alreadyComputedPrefixes_and_outnames, testPath)
@@ -212,6 +213,15 @@ def predictOnePrefix(testPrefixes, modelo, outName, testingDataPath):
   '''
   testPrefixes: Prefixes of a given complex. E.g. 1ACB@1 1ACB@2 for 1ACB, or directly 1ACB
   '''
+  try:
+    return _predictOnePrefixInner(testPrefixes, modelo, outName, testingDataPath)
+  except Exception as e:
+    import warnings
+    initPrefix = list(testPrefixes)[0].split("@")[0].split("_")[0].split("#s")[0]
+    warnings.warn("Skipping prediction for %s due to error: %s" % (initPrefix, e))
+    return None
+
+def _predictOnePrefixInner(testPrefixes, modelo, outName, testingDataPath):
   prob_predictionsDir = []
   prob_predictionsTrans = []
   initPrefix = list(testPrefixes)[0].split("@")[0].split("_")[0].split("#s")[0]
