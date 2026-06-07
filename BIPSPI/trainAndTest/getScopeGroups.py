@@ -86,6 +86,10 @@ def loadFromTable(fname, ligandReceptorOrder):
     for line in f:
       if line.startswith("#"): continue
       lineArray= line.split()
+      if len(lineArray) < 5:  # skip malformed/short lines (e.g. reduced tab missing scope cols)
+        import warnings
+        warnings.warn("Skipping short line in scope table (expected 5 cols, got %d): %r" % (len(lineArray), line.rstrip()))
+        continue
       if ligandReceptorOrder:
         prefix, chainsL, chainsR, scopesR, scopesL= lineArray[:5]
       else:
