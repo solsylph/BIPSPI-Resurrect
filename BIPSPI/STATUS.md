@@ -3,7 +3,7 @@
 **Upstream:** [rsanchezgarc/BIPSPI](https://github.com/rsanchezgarc/BIPSPI) (Python 2.7)
 **Our fork:** [solsylph/BIPSPI-Resurrect](https://github.com/solsylph/BIPSPI-Resurrect)
 **Purpose:** sequence-mode resurrection on the ESMFold-multimer mmseqs2-clustered splits, as a non-RF baseline after the RF-on-ESM2 architectural ceiling was confirmed (pair-AUROC ~0.55 on test).
-**Last update:** 2026-06-07 (Round 19 applied — corrupt joblib pickle skip).
+**Last update:** 2026-06-10 (ESM2 integration designed + implemented — Path B ready).
 
 > **Repo layout:** GitHub repo has `BIPSPI/` as a subdirectory at its root (local git repo was reinitialised at `E:\BIPSPI-Resurrect\` instead of `E:\BIPSPI-Resurrect\BIPSPI\`). On the cluster: `~/BIPSPI-Resurrect/BIPSPI/`. All commands assume `cd ~/BIPSPI-Resurrect/BIPSPI` first.
 
@@ -24,7 +24,8 @@
 | Canonical data | Fetch BIPSPI's published training set (info_HEDt.tab + Benchmark 5 + RCSB) | ✅ (2610/2611 prepared) |
 | Smoke seq | `--modelType seq` against `./docs/trainingPDBsExample` | ✅ **Complete 2026-06-03. Both seq + seq_2 stages trained and evaluated. 6 complexes, 16 rounds of fixes.** |
 | Canonical run | Full 2611-complex BIPSPI seq training | ⏳ **RUNNING** (2026-06-04, restarted with 128 CPUs after 16-CPU run was too slow; ~15 hr ETA for features) |
-| Re-baseline | Our splits + 07b-comparable evaluation | blocked on canonical run |
+| ESM2 integration | Add ESM2 per-token embeddings as BIPSPI features | ✅ implemented (2026-06-10) |
+| Re-baseline | Our splits + 07b-comparable evaluation | ⏳ ready to run (Path B) |
 
 ---
 
@@ -351,42 +352,125 @@ External (on cluster, NOT in this repo):
 
 ## 13. Current activity (live)
 
-**As of 2026-06-03**: **Smoke test COMPLETE.** 16 rounds of runtime fixes total (Rounds 1-10 feature pipeline; Rounds 11-16 training pipeline). Both seq and seq_2 stages ran end-to-end on the 6-complex bundled example. Results produced (auc_pair ~0.61 stage-1, ~0.59 stage-2 — meaningless for 6 toy complexes, proves the pipeline runs). Models saved at `/tmp/test_bipspi_seq_v2/modelsComputed/`.
+**As of 2026-06-03**: **Smoke test COMPLETE.** 16 rounds of runtime fixes (Rounds 1–16). Both seq + seq_2 stages ran end-to-end on the 6-complex bundled example.
 
-**As of 2026-06-04**: **Path A canonical run LIVE** on haskell in `tmux attach -t bipspi_canonical`.
+**As of 2026-06-08**: **Reduced canonical run COMPLETE.** Switched from the full 2610-complex run (too slow at 16 CPUs) to a reduced set (`info_reduced.tab`, ~1647 complexes with pre-cached features). Three additional runtime fix rounds:
+- Round 17: `pd.concat([])` guard in `DataLoaderClass.py` + codification skip on error
+- Round 18: `getScopeGroups.py` skips short/malformed lines in scope table
+- Round 19: corrupt joblib pickle skip in `processOneFold.py`
 
-First attempt ran with 16 CPUs (8 parallel psiblasts) — projected ~13 days, too slow. Killed after ~12 hours (~234 chains cached). Restarted with 128 CPUs (64 parallel psiblasts) and 7-day time limit.
+OOM issues during `seq_2` codification resolved by requesting 256G RAM from SLURM (node has 503G total). Final run used `--ncpu 32 --mem=256G --time=8:00:00`. The model was trained and saved at `~/bipspi_run/canonical/wdir/modelsComputed/model.seq_2` moments before the 8-hour time limit hit.
 
-Current srun:
+**Results on 27 Benchmark 5 uppercase complexes** (in the reduced set — not the full 228-complex published benchmark):
+
+| complex | auc_pair | … |
+|---|---|---|
+| mean (27 complexes) | **0.8485** | see stdout table from the run |
+
+Note: 0.85 is not directly comparable to BIPSPI's published ~0.72 (different complex set, only 27 of 228). The pipeline is working correctly.
+
+**As of 2026-06-10**: **ESM2 integration COMPLETE.** Added `Esm2Manager.py` + config flags to replace classic PSSM/al2co/SPIDER2 features with pre-computed ESM2-650M per-token embeddings. See §14 for full details.
+
+**Next step: Path B** — run BIPSPI with ESM2 features on our mmseqs2-clustered splits for apples-to-apples comparison with 07b RF (pair-AUROC ~0.55).
+
+**Pre-flight before Path B**:
 ```bash
-srun --partition=cpu --cpus-per-task=128 --mem=128G --time=7-00:00:00 --pty bash -l
+# On cluster (protein env):
+python -c "import zarr; s=zarr.open('/home/biostruct01/ESMFold-multimer/code/esmfold_multimer/data/cached/esm2.zarr','r'); print(len(list(s.keys())), 'entries')"
 ```
 
-**ETA**: ~15 hours for feature computation (128 CPUs = 64 parallel psiblasts, ~5800 remaining chains). Training after that. All previously computed chains (~234) are cached and will be skipped.
-
-**To check progress**:
+**Path B run** (see §14 for full commands):
 ```bash
-DONE=$(ls ~/bipspi_run/canonical/wdir/computedFeatures/common/contactMaps/*.cMap.tab.gz 2>/dev/null | wc -l)
-echo "$DONE / 2610 ($(( DONE * 100 / 2610 ))%)"
-```
-
-When you see `All features computed for: 2610` the slow part is done.
-
-**After canonical run**: check auc_pair on the Benchmark 5 uppercase complexes against BIPSPI's published ~0.72, then fire Path B.
-
-**Path B** (our mmseqs2 splits vs 07b RF — runs after canonical validates the port):
-```bash
+# Enable ESM2 mode in config, then:
 python tools/prepare_bipspi_inputs.py \
-    --splits-dir ~/ESMFold-multimer/data/splits \
-    --structures-dir ~/ESMFold-multimer/data/structures \
-    --output-dir ~/bipspi_run/our_splits \
-    --evaluate test
+    --splits-dir ~/ESMFold-multimer/code/esmfold_multimer/data/splits \
+    --structures-dir ~/ESMFold-multimer/code/esmfold_multimer/data/structures \
+    --output-dir ~/bipspi_run/esm2_splits --evaluate test
 python generateBIPSPIModel.py \
     --modelType seq \
-    --pdbsIndir ~/bipspi_run/our_splits/pdbs \
-    --N_KFOLD ~/bipspi_run/our_splits/folds.json \
-    --wdir ~/bipspi_run/our_splits/wdir \
-    --ncpu 16
+    --pdbsIndir ~/bipspi_run/esm2_splits/pdbs \
+    --N_KFOLD ~/bipspi_run/esm2_splits/folds.json \
+    --wdir ~/bipspi_run/esm2_splits/wdir \
+    --ncpu 32
+```
+
+---
+
+## 14. ESM2 Integration (2026-06-10)
+
+### Goal
+Replace BIPSPI's classic sequential features (PSSM/al2co/SPIDER2) with pre-computed ESM2-650M per-token embeddings from the ESMFold-multimer pipeline. Allows apples-to-apples comparison with the 07b RF baseline: same proteins, same embeddings, different model architecture (XGBoost pair-coding vs Random Forest).
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `computeFeatures/seqStep/seqToolManagers/conservationTools/Esm2Manager.py` | **new** — reads `per_tok_embedding [L, 1280]` from zarr, writes per-chain `.esm2.tab.gz` in BIPSPI's standard format |
+| `computeFeatures/seqStep/seqFeatsComputer.py` | ESM2 branch + `skipClassicFeatures` gate; `copySameSeq` updated |
+| `codifyComplexes/codifyProtocols/SeqProtocol.py` | `FEATURES_TO_INCLUDE_CHAIN_ESM2` + `FEATURES_TO_INCLUDE_PAIR_ESM2` constants |
+| `codifyComplexes/codifyOneComplex.py` | Passes ESM2 feature list to `SeqProtocol` when `useEsm2 + skipClassicFeatures` |
+| `configFiles/cmdTool/dependencies.cfg` | `useEsm2 False`, `skipClassicFeatures False`, `esm2ZarrPath_path ~/ESMFold-multimer/...` |
+
+### How the zarr is structured
+`/home/biostruct01/ESMFold-multimer/code/esmfold_multimer/data/cached/esm2.zarr` — written by `06_cache_esm2.py`:
+- Group key: `sha256(sequence)` (SHA256 of the canonical RCSB sequence string)
+- Arrays per group: `per_tok_embedding [L, 1280]` float32, `mean_embedding [1280]` float32
+
+### Activation
+Enable ESM2-only mode by editing `configFiles/cmdTool/dependencies.cfg`:
+```
+useEsm2 True
+skipClassicFeatures True
+```
+Or set on cluster before running:
+```bash
+sed -i 's/^useEsm2 False/useEsm2 True/' configFiles/cmdTool/dependencies.cfg
+sed -i 's/^skipClassicFeatures False/skipClassicFeatures True/' configFiles/cmdTool/dependencies.cfg
+```
+
+### Path B run command (ESM2 features, our mmseqs2 splits)
+```bash
+# 1. Prepare our splits as BIPSPI inputs
+python tools/prepare_bipspi_inputs.py \
+    --splits-dir ~/ESMFold-multimer/code/esmfold_multimer/data/splits \
+    --structures-dir ~/ESMFold-multimer/code/esmfold_multimer/data/structures \
+    --output-dir ~/bipspi_run/esm2_splits \
+    --evaluate test
+
+# 2. Enable ESM2 mode
+sed -i 's/^useEsm2 False/useEsm2 True/' configFiles/cmdTool/dependencies.cfg
+sed -i 's/^skipClassicFeatures False/skipClassicFeatures True/' configFiles/cmdTool/dependencies.cfg
+
+# 3. Run (no psiblast needed — features are loaded from zarr)
+python generateBIPSPIModel.py \
+    --modelType seq \
+    --pdbsIndir ~/bipspi_run/esm2_splits/pdbs \
+    --N_KFOLD ~/bipspi_run/esm2_splits/folds.json \
+    --wdir ~/bipspi_run/esm2_splits/wdir \
+    --ncpu 32
+```
+
+### Known risk: sequence hash mismatch
+The zarr was built from RCSB SEQRES sequences; BIPSPI extracts sequences from PDB ATOM records. These can differ at termini (unresolved residues). For Path B, both use the same RCSB CIF files so hashes should match. If a complex's sequence isn't found in the zarr, `Esm2Manager` raises `ValueError`, which `launchCodifyOneComplex` (Round 17 try-except) catches and skips with a warning — consistent with the rest of the pipeline.
+
+### Expected outcome
+| Model | Features | Arch | Expected pair-AUROC |
+|---|---|---|---|
+| 07b RF | ESM2 1280d | Random Forest | ~0.55 (measured) |
+| BIPSPI + ESM2 | ESM2 1280d | XGBoost + pair-coding | TBD |
+| BIPSPI canonical | PSSM + al2co + SPIDER2 | XGBoost | ~0.72 (published) |
+
+If BIPSPI+ESM2 > RF+ESM2: the XGBoost pair-coding architecture matters more than the features.
+If BIPSPI+ESM2 ≈ RF+ESM2: the architectural ceiling is in the features themselves.
+
+### Pre-flight checks before Path B run
+```bash
+# zarr accessible?
+python -c "import zarr; s=zarr.open('~/ESMFold-multimer/code/esmfold_multimer/data/cached/esm2.zarr','r'); print(len(list(s.keys())), 'entries')"
+# zarr installed?
+python -c "import zarr; print(zarr.__version__)"
+# splits ready?
+ls ~/bipspi_run/esm2_splits/pdbs/ | head -5
 ```
 
 ### Quick handoff for a fresh chat

@@ -17,6 +17,11 @@ FEATURES_TO_INCLUDE_CHAIN= [
 FEATURES_TO_INCLUDE_PAIR= [
   ("corrMut", ("seqStep/conservation/corrMut", None)),
 ]
+# ESM2-only mode: replace classic features with pre-computed ESM2 per-token embeddings
+FEATURES_TO_INCLUDE_CHAIN_ESM2 = [
+  ("esm2", ("seqStep/esm2", None)),
+]
+FEATURES_TO_INCLUDE_PAIR_ESM2 = []
 
 class SeqProtocol(AbstractProtocol):
   '''

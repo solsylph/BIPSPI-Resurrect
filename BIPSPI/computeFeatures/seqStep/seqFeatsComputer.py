@@ -17,6 +17,7 @@ from .seqToolManagers.conservationTools.HHblitsManager import HHBlitsManager
 from .seqToolManagers.conservationTools.CCMPredManger import CCMPredManager as CorrMutManager, HHBLITS_CMD_TEMPLATE
 
 from .seqToolManagers.asaPredictions.spider2Manager import Spider2Manager
+from .seqToolManagers.conservationTools.Esm2Manager import Esm2Manager
 
 WIN_SIZE= 11
 
@@ -45,8 +46,23 @@ class SeqFeatComputer(FeaturesComputer):
     self.al2coManager= Al2coManager( self.conservationOutPath, winSize= None) #Object to launch and process al2co
     
     self.spider2Manager= Spider2Manager( self.computedFeatsRootDir, winSize= None) #Object to launch and process spyder2
-    self.singleChainOutPaths=[ self.seqsWorkingDir, self.psiBlastManager.getFinalPath(), self.al2coManager.getFinalPath(),
-                              self.seqWindower.getFinalPath()] + [self.spider2Manager.getFinalPath()]
+
+    # ESM2 mode: read flags from Config (useEsm2, skipClassicFeatures, esm2ZarrPath)
+    self.useEsm2 = getattr(self, 'useEsm2', False)
+    self.skipClassicFeatures = getattr(self, 'skipClassicFeatures', False)
+    if self.useEsm2:
+      self.esm2Manager = Esm2Manager(self.computedFeatsRootDir, self.esm2ZarrPath)
+
+    if self.useEsm2 and self.skipClassicFeatures:
+      # ESM2-only: skip psiblast/al2co/winSeq/SPIDER2 dirs from the completeness check
+      self.singleChainOutPaths = [self.seqsWorkingDir, self.esm2Manager.getFinalPath()]
+    else:
+      self.singleChainOutPaths = [self.seqsWorkingDir, self.psiBlastManager.getFinalPath(),
+                                   self.al2coManager.getFinalPath(), self.seqWindower.getFinalPath(),
+                                   self.spider2Manager.getFinalPath()]
+      if self.useEsm2:
+        self.singleChainOutPaths.append(self.esm2Manager.getFinalPath())
+
     self.pairwiseOutPaths=[]
     if self.useCorrMut:
       self.hHBlitsManager= HHBlitsManager( self.conservationOutPath, winSize= None, 
@@ -101,17 +117,22 @@ class SeqFeatComputer(FeaturesComputer):
             computedSeqs[seqStr].add(computedExtenPrefix)
             self.copySameSeq( computedExtenPrefix, extendedPrefix) 
         pdbCode= lPdbId if chainType=="l" else rPdbId
-        psiblastOutName, pssmOutNameRaw = self.psiBlastManager.computeFromSeqStructMapper( self.SeqStructMapper, 
-                                                                                       extendedPrefix, pdbCode)
-        self.seqWindower.computeFromSeqStructMapper( self.SeqStructMapper, extendedPrefix )
-        self.al2coManager.computeFromSeqStructMapper( self.SeqStructMapper, extendedPrefix, psiblastOutName, pssmOutNameRaw )
-        self.spider2Manager.computeFromSeqStructMapper( self.SeqStructMapper, extendedPrefix, pssmOutNameRaw )
-        if self.useCorrMut:
-          aligsName, __, __ =self.hHBlitsManager.computeFromSeqStructMapper(self.SeqStructMapper, extendedPrefix) # Must be executed after psiBlastManager execution  
-          HHblitsAligsDict[chainType][chainId]= aligsName
+        if not self.skipClassicFeatures:
+          psiblastOutName, pssmOutNameRaw = self.psiBlastManager.computeFromSeqStructMapper( self.SeqStructMapper,
+                                                                                         extendedPrefix, pdbCode)
+          self.seqWindower.computeFromSeqStructMapper( self.SeqStructMapper, extendedPrefix )
+          self.al2coManager.computeFromSeqStructMapper( self.SeqStructMapper, extendedPrefix, psiblastOutName, pssmOutNameRaw )
+          self.spider2Manager.computeFromSeqStructMapper( self.SeqStructMapper, extendedPrefix, pssmOutNameRaw )
+          if self.useCorrMut:
+            aligsName, __, __ =self.hHBlitsManager.computeFromSeqStructMapper(self.SeqStructMapper, extendedPrefix)
+            HHblitsAligsDict[chainType][chainId]= aligsName
+        else:
+          psiblastOutName, pssmOutNameRaw = None, None
+        if self.useEsm2:
+          self.esm2Manager.computeFromSeqStructMapper( self.SeqStructMapper, extendedPrefix )
         self.reportStatus("..... Done" )
 
-    if self.useCorrMut:    
+    if not self.skipClassicFeatures and self.useCorrMut:
       self.reportStatus("\n Computing correlated mutations" )
       self.corrMutManager.computeFromSeqStructMapper(self.SeqStructMapper, extendedPrefix, HHblitsAligsDict)
 
@@ -121,8 +142,9 @@ class SeqFeatComputer(FeaturesComputer):
         seqStr, fastaFname= self.SeqStructMapper.getSeq(chainType, chainId)
         extendedPrefix= self.getExtendedPrefix( fastaFname) #Extended prefix in seq step is prefix+chainType+chainId
         print(extendedPrefix)
-        self.psiBlastManager.compressRawData(extendedPrefix)
-        if self.useCorrMut:    self.hHBlitsManager.compressRawData(extendedPrefix)
+        if not self.skipClassicFeatures:
+          self.psiBlastManager.compressRawData(extendedPrefix)
+          if self.useCorrMut:    self.hHBlitsManager.compressRawData(extendedPrefix)
     self.reportStatus("..... Done" )
 
   def getAlreadyComputedSeqs(self):
@@ -180,10 +202,14 @@ class SeqFeatComputer(FeaturesComputer):
     oldPrefix, oldChainType, oldChainId = self.splitExtendedPrefix(oldExtendedPrefix)[:3]
     newPrefix, newChainType, newChainId = self.splitExtendedPrefix(newExtendedPrefix)[:3]
     if oldPrefix==newPrefix and oldChainType== newChainType and oldChainId== newChainId:
-      fnamesToCopy= self.psiBlastManager.getFNames(oldExtendedPrefix)
-      fnamesToCopy+= list(self.al2coManager.getFNames(oldExtendedPrefix))
-      if self.useCorrMut:
-        fnamesToCopy+= list(self.hHBlitsManager.getFNames(oldExtendedPrefix))
+      fnamesToCopy = []
+      if not self.skipClassicFeatures:
+        fnamesToCopy= self.psiBlastManager.getFNames(oldExtendedPrefix)
+        fnamesToCopy+= list(self.al2coManager.getFNames(oldExtendedPrefix))
+        if self.useCorrMut:
+          fnamesToCopy+= list(self.hHBlitsManager.getFNames(oldExtendedPrefix))
+      if self.useEsm2:
+        fnamesToCopy+= self.esm2Manager.getFNames(oldExtendedPrefix)
 
     for oriName in fnamesToCopy:
       destName= oriName.replace(oldExtendedPrefix, newExtendedPrefix)

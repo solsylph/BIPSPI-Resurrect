@@ -7,7 +7,8 @@ import json
 from utils import tryToRemove
 from .CodifyComplexException import CodifyComplexException
 from .ComplexCodified import ComplexCodified, ComplexSeqStructCodified
-from .codifyProtocols.SeqProtocol import SeqProtocol
+from .codifyProtocols.SeqProtocol import (SeqProtocol, FEATURES_TO_INCLUDE_CHAIN_ESM2,
+                                           FEATURES_TO_INCLUDE_PAIR_ESM2)
 from .codifyProtocols.StructProtocol import StructProtocol
 from .codifyProtocols.MixedProtocol import MixedProtocol
 
@@ -77,7 +78,15 @@ class OneComplexCodifier(object):
       self.cMapPath= os.path.realpath(os.path.expanduser(feedback_paths[-1]))
     else:
       self.cMapPath= os.path.realpath(os.path.expanduser(feedback_paths)) # use  previous step results to get interacting residues ground truth
-    self.CodProtocol= self.CodProtocol(self.dataRootPath, self.cMapPath, self.feedback_paths, verbose=verbose)
+    from Config import Configuration as _Cfg
+    _cfg = _Cfg()
+    if getattr(_cfg, 'useEsm2', False) and getattr(_cfg, 'skipClassicFeatures', False):
+      # ESM2-only mode: use ESM2 feature dirs instead of PSSM/al2co/SPIDER2
+      self.CodProtocol= self.CodProtocol(self.dataRootPath, self.cMapPath, self.feedback_paths,
+                                          singleChainfeatsToInclude=FEATURES_TO_INCLUDE_CHAIN_ESM2,
+                                          pairfeatsToInclude=FEATURES_TO_INCLUDE_PAIR_ESM2, verbose=verbose)
+    else:
+      self.CodProtocol= self.CodProtocol(self.dataRootPath, self.cMapPath, self.feedback_paths, verbose=verbose)
 
     
   def codifyComplex(self,prefix):
