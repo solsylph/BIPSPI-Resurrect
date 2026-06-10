@@ -33,7 +33,9 @@ class Esm2Manager(SeqToolManager):
 
   @staticmethod
   def _seqHash(seq):
-    return hashlib.sha256(seq.encode()).hexdigest()
+    # Must match the key derivation in 06_cache_esm2.py (the zarr writer),
+    # which truncates the SHA256 hexdigest to 16 chars.
+    return hashlib.sha256(seq.encode()).hexdigest()[:16]
 
   def getFinalPath(self):
     return self.esm2OutPath
