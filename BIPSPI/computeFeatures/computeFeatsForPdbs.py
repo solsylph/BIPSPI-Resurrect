@@ -108,9 +108,18 @@ def launchComputeFeaturesOneComplex(ligAndRecFnames, prefix, computedFeatsRootDi
     :param ligAndRecFnames: [pathToLigandPdb, pathToReceptorPDB]
     :param: boundAvailable. True if there is a bound and unbound pdb for each complex. False otherwise
   '''    
-  featComp= OneComplexFeatComputer(prefix, computedFeatsRootDir, methodProtocol, areForTrainAndTest=True, 
-                                   boundAvailable= boundAvailable, statusManager= None)
-  featComp.computeFeaturesOneComplex( * ligAndRecFnames, **{"isHomoComplex":checkIfLRHomo})
+  try:
+    featComp= OneComplexFeatComputer(prefix, computedFeatsRootDir, methodProtocol, areForTrainAndTest=True,
+                                     boundAvailable= boundAvailable, statusManager= None)
+    featComp.computeFeaturesOneComplex( * ligAndRecFnames, **{"isHomoComplex":checkIfLRHomo})
+  except Exception as e:
+    # Skip a single bad complex instead of aborting the whole joblib batch.
+    # Common causes: BadNumberOfResidues (chain too short/long), BadSequence,
+    # malformed PDB. Consistent with the skip-don't-crash guards in
+    # launchCodifyOneComplex (codify step) and predictOnePrefix (predict step).
+    print("WARNING: skipping complex %s during feature computation: %s: %s"
+          % (prefix, type(e).__name__, e))
+    return None
   
   
 def test():
