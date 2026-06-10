@@ -51,7 +51,8 @@ class SeqFeatComputer(FeaturesComputer):
     self.useEsm2 = getattr(self, 'useEsm2', False)
     self.skipClassicFeatures = getattr(self, 'skipClassicFeatures', False)
     if self.useEsm2:
-      self.esm2Manager = Esm2Manager(self.computedFeatsRootDir, self.esm2ZarrPath)
+      self.esm2Manager = Esm2Manager(self.computedFeatsRootDir, self.esm2ZarrPath,
+                                     candidatesJsonPath=getattr(self, 'esm2CandidatesJson', None))
 
     if self.useEsm2 and self.skipClassicFeatures:
       # ESM2-only: skip psiblast/al2co/winSeq/SPIDER2 dirs from the completeness check
