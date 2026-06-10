@@ -16,8 +16,18 @@ class NoValidPDBFile(MyException):
 class BadNumberOfResidues(Configuration, MyException):
   def __init__(self, nResidues, partnerId):
     Configuration.__init__(self)
+    self.nResidues = nResidues
+    self.partnerId = partnerId
     MyException.__init__(self, "Bad number of residues for partner %s: %d. Number of residues must be %d < nResidues < %d"%(
                                  partnerId, nResidues, self.minNumResiduesPartner , self.maxNumResiduesPartner))
+
+  def __reduce__(self):
+    # Pickle round-trips an exception via cls(*args); this exception's __init__
+    # takes (nResidues, partnerId), not the single message string MyException
+    # stores in self.args. Without this, unpickling in the parent process (when
+    # a multiprocessing worker raises it) fails with a TypeError and kills the
+    # pool's result-handler thread.
+    return (self.__class__, (self.nResidues, self.partnerId))
     
 class BadSequence(Configuration, MyException):
   def __init__(self, msg):
