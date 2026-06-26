@@ -507,9 +507,10 @@ After the `@`-rename, codify reached `AbstractProtocol.applyProtocol` but every 
 
 The fallback fired because `seqStructMap.seqToStructIndex()` returned `None` for **every** residue: at `seqStructMapper.py:248` it does `self.seqToRefSeq[(chainType,chainId)]`, which raises `KeyError` (caught → `None`) unless `setCurrentSeq()` has registered that chain. **Every** classic single-chain manager (PsiBlast/Spider2/Al2co/HHblits/windowSeq) calls `seqStructMap.setCurrentSeq(seqStr, chainType, chainId)` right after `getSeq`; the ESM2 manager was the only one that didn't. Fix = add that one call (matches the proven pattern; does not touch the shared `seqToStructIndex`). Systematic — confirmed by 6/6 sampled prefixes failing identically.
 
-**Regeneration required:** the on-disk `esm2/*.esm2.tab.gz` have the wrong resIds baked in, and the manager's `os.path.isfile` short-circuit would keep them. Procedure (cluster, `protein` env, after `git pull`):
+**Regeneration required:** the on-disk `esm2/*.esm2.tab.gz` have the wrong resIds baked in, and the manager's `os.path.isfile` short-circuit would keep them. **GOTCHA:** `computeFeaturesAllPdbsOneDir` short-circuits the *entire* step if `<computedFeatsRootDir>/allFeaturesComputed.txt` exists (prints "All features computed for: N" and returns) — deleting the esm2 files alone is NOT enough, you must also delete that marker. `dbg_compute_feats.py` now removes the marker automatically. Procedure (cluster, `protein` env, after `git pull`):
 ```bash
 rm ~/bipspi_run/esm2_splits/wdir/computedFeatures/seqStep/esm2/*.esm2.tab.gz
+rm -f ~/bipspi_run/esm2_splits/wdir/computedFeatures/allFeaturesComputed.txt   # or rely on dbg_compute_feats.py
 cd ~/BIPSPI-Resurrect/BIPSPI
 PYTHONPATH=. python dbg_compute_feats.py --modelType seq \
     --pdbsIndir ~/bipspi_run/esm2_splits/pdbs \

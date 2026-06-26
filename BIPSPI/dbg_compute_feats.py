@@ -20,6 +20,8 @@ calls computeFeatures() instead of main().
 """
 from __future__ import absolute_import, print_function
 
+import os
+
 import generateBIPSPIModel as g
 from Config import Configuration
 
@@ -34,6 +36,17 @@ if __name__ == "__main__":
     parser.modify_field("scopeFamiliesFname", help="Filename containing the families of the protein chains", _type=Configuration.file_path)
 
     parser.parse_args()
+
+    # computeFeaturesAllPdbsOneDir() short-circuits the ENTIRE step if the marker
+    # file <computedFeatsRootDir>/allFeaturesComputed.txt exists (it just prints
+    # "All features computed for: N" and returns).  Since the whole point of this
+    # tool is to FORCE regeneration of (already-deleted) feature files, remove the
+    # marker first; per-feature os.path.isfile checks still skip everything that
+    # is still on disk, so only the deleted files are recomputed.
+    marker = os.path.join(os.path.expanduser(g.conf.computedFeatsRootDir), "allFeaturesComputed.txt")
+    if os.path.exists(marker):
+        os.remove(marker)
+        print("removed completion marker: %s" % marker)
 
     g.computeFeatures()
     print("FEATURE COMPUTE DONE (codify/train/eval intentionally skipped)")
