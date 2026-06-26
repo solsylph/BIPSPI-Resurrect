@@ -25,9 +25,10 @@ By default: train + val complexes are lowercased; test complexes are uppercased.
 That gives a single-run baseline producing test-set metrics directly comparable
 to 07b's RF baseline.
 
-Disambiguation: (pdb_id, chain_a, chain_b) -> "{PDB}@{chainA}{chainB}".
-BIPSPI uses prefix[:4].isupper() for the eval gate so the @-suffix doesn't
-break case detection.
+Disambiguation: (pdb_id, chain_a, chain_b) -> "{PDB}{chainA}{chainB}".
+BIPSPI uses prefix[:4].isupper() for the eval gate so the chain suffix doesn't
+break case detection.  '@' must NOT be used as a separator -- BIPSPI reserves it
+as a sampling-variant tag and strips it in ~15 places (see make_prefix).
 
 Multi-copy chains: if the biological assembly CIF contains multiple physical
 copies of chain_a (e.g. C2 homo-dimer where label "A" appears twice), all
@@ -59,12 +60,20 @@ def make_prefix(pdb_id: str, chain_a: str, chain_b: str, evaluated: bool) -> str
     """Build a BIPSPI-style prefix. Uppercase if evaluated, lowercase otherwise.
 
     The 4-char PDB ID slice is the part BIPSPI's evaluation gate checks
-    (prefix[:4].isupper()).  Chain ids are appended after '@' for uniqueness.
+    (prefix[:4].isupper()).  Chain ids are concatenated directly after the
+    4-char PDB id for uniqueness.
+
+    NOTE: chain ids must NOT be separated with '@'.  BIPSPI reserves '@' as a
+    "same-complex sampling variant" tag and strips everything after it in ~15
+    places (file lookup, CV grouping, result averaging), which would (a) break
+    feature-file lookup ("4lvh@bc" -> "4lvh") and (b) collapse distinct
+    chain-pairs of one pdb ("4lac@ac" + "4lac@bc" -> "4lac").  The 4-char PDB-id
+    boundary makes the concatenated form collision-free.
     """
     pdb = pdb_id.upper() if evaluated else pdb_id.lower()
     chains = (chain_a + chain_b)
     chains = chains.upper() if evaluated else chains.lower()
-    return f"{pdb}@{chains}"
+    return f"{pdb}{chains}"
 
 
 def extract_chain_to_pdb(

@@ -21,7 +21,7 @@ FEATURES_TO_INCLUDE_PAIR= [
 FEATURES_TO_INCLUDE_CHAIN_ESM2 = [
   ("esm2", ("seqStep/esm2", None)),
 ]
-FEATURES_TO_INCLUDE_PAIR_ESM2 = []
+FEATURES_TO_INCLUDE_PAIR_ESM2 = None  # None (not []) so addPairFeatures is skipped; [] passes the `is not None` guard and then indexes [0]
 
 class SeqProtocol(AbstractProtocol):
   '''

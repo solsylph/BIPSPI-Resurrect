@@ -3,7 +3,7 @@
 **Upstream:** [rsanchezgarc/BIPSPI](https://github.com/rsanchezgarc/BIPSPI) (Python 2.7)
 **Our fork:** [solsylph/BIPSPI-Resurrect](https://github.com/solsylph/BIPSPI-Resurrect)
 **Purpose:** sequence-mode resurrection on the ESMFold-multimer mmseqs2-clustered splits, as a non-RF baseline after the RF-on-ESM2 architectural ceiling was confirmed (pair-AUROC ~0.55 on test).
-**Last update:** 2026-06-10 (ESM2 integration designed + implemented — Path B ready).
+**Last update:** 2026-06-26 (Path B run attempted; SEQRES-hash fix + 3 runtime fixes landed; blocked on `@`-prefix codification collision — see §15).
 
 > **Repo layout:** GitHub repo has `BIPSPI/` as a subdirectory at its root (local git repo was reinitialised at `E:\BIPSPI-Resurrect\` instead of `E:\BIPSPI-Resurrect\BIPSPI\`). On the cluster: `~/BIPSPI-Resurrect/BIPSPI/`. All commands assume `cd ~/BIPSPI-Resurrect/BIPSPI` first.
 
@@ -25,7 +25,8 @@
 | Smoke seq | `--modelType seq` against `./docs/trainingPDBsExample` | ✅ **Complete 2026-06-03. Both seq + seq_2 stages trained and evaluated. 6 complexes, 16 rounds of fixes.** |
 | Canonical run | Full 2611-complex BIPSPI seq training | ⏳ **RUNNING** (2026-06-04, restarted with 128 CPUs after 16-CPU run was too slow; ~15 hr ETA for features) |
 | ESM2 integration | Add ESM2 per-token embeddings as BIPSPI features | ✅ implemented (2026-06-10) |
-| Re-baseline | Our splits + 07b-comparable evaluation | ⏳ ready to run (Path B) |
+| ESM2 feature compute | Run feature step on our splits (Path B) | ✅ **clean 2026-06-26** (97.6% retained after SEQRES-hash fix; see §15) |
+| Re-baseline | Our splits + 07b-comparable evaluation | 🟡 **fix staged 2026-06-26** (`@`-prefix blocker resolved: `@`-free `make_prefix` + rename-in-place script; pending push → cluster apply → relaunch, §15) |
 
 ---
 
@@ -450,8 +451,8 @@ python generateBIPSPIModel.py \
     --ncpu 32
 ```
 
-### Known risk: sequence hash mismatch
-The zarr was built from RCSB SEQRES sequences; BIPSPI extracts sequences from PDB ATOM records. These can differ at termini (unresolved residues). For Path B, both use the same RCSB CIF files so hashes should match. If a complex's sequence isn't found in the zarr, `Esm2Manager` raises `ValueError`, which `launchCodifyOneComplex` (Round 17 try-except) catches and skips with a warning — consistent with the rest of the pipeline.
+### Known risk: sequence hash mismatch → CONFIRMED + FIXED (2026-06-26, see §15)
+The zarr was built from RCSB **SEQRES** sequences (from `candidates.json`); BIPSPI extracts sequences from PDB **ATOM** records (resolved residues only). The "both use the same CIF so hashes match" assumption was **WRONG** — 1,857/7,609 complexes (~25%) missed on the first real run. Two parts to the fix: (1) the zarr key is `sha256(seq)[:16]` not the full digest (`Esm2Manager` was computing 64 chars — commit `16f7a92`); (2) a **SEQRES-candidate fallback** in `Esm2Manager` that, on an ATOM-hash miss, looks up the candidate SEQRES sequence for the same pdbId, fetches its `[L,1280]` embedding, and global-aligns ATOM→SEQRES to slice one embedding row per resolved residue (commit `d03e479`). This dropped misses from 1,857 → 13 (0.17%).
 
 ### Expected outcome
 | Model | Features | Arch | Expected pair-AUROC |
@@ -477,3 +478,64 @@ ls ~/bipspi_run/esm2_splits/pdbs/ | head -5
 1. Open Claude Code with CWD = `E:\BIPSPI-Resurrect\BIPSPI\`
 2. Prompt: "Read STATUS.md. Canonical run in progress / done. Last output: [paste]."
 3. STATUS.md is the single source of truth. No other files required.
+
+---
+
+## 15. Path B run attempt + blockers (2026-06-26)
+
+First real Path-B run on the cluster (`haskell` node, `~/bipspi_run/esm2_splits/`). Feature computation now runs **clean**; codification is **blocked** on an input-naming collision. Four commits landed this session; one fix is staged locally and not yet pushed.
+
+### Commits landed (pushed)
+| Commit | Round | Fix |
+|---|---|---|
+| `16f7a92` | — | `Esm2Manager._seqHash` truncates to `[:16]` to match the zarr key (`06_cache_esm2.py:243` uses `sha256(seq).hexdigest()[:16]`). Was computing full 64-char digest → 100% miss. |
+| `185bc5b` | 20 | `BadNumberOfResidues` made picklable (stores `nResidues`/`partnerId` + `__reduce__`). Worker exceptions were unpicklable in the parent (`__init__` needs 2 args, pickle supplied 1 msg string) → killed the multiprocessing `_handle_results` thread → risk of hang at join. |
+| `50c9146` | 21 | `launchComputeFeaturesOneComplex` wrapped in try-except → skip bad complex with warning instead of `_raise_error_fast` aborting the whole joblib batch. Same skip-don't-crash pattern as Rounds 17/19 (codify/predict steps); this was the last unguarded step (feature compute). |
+| `d03e479` | — | `Esm2Manager` SEQRES-candidate fallback with align+slice (see §14 risk note). Dropped ESM2 misses 1,857 → 13. Adds `esm2CandidatesJson_path` to `dependencies.cfg` + threads it through `seqFeatsComputer.py`. |
+
+### Staged locally, NOT pushed (user pushes — see memory `git-push-is-users-job`)
+- **`SeqProtocol.py`: `FEATURES_TO_INCLUDE_PAIR_ESM2 = None`** (was `[]`). An empty list passes the `if not self.pairfeatsToInclude is None:` guard in `AbstractProtocol.applyProtocol:87` and then indexes `self.pairfeatsToInclude[0]` at `addPairFeatures:224` → `IndexError: list index out of range` on **every** complex → `0 train complexes loaded` → `UnboundLocalError: ppiComplex` in `trainAndTest.loadTrainingData:145`. `None` makes `addPairFeatures` be skipped. Fixes the *first* of two codification problems.
+- **`tools/prepare_bipspi_inputs.py`: `make_prefix` now `@`-free** (`f"{pdb}{chains}"`). Fixes the *second* (the `@`-collision blocker below).
+- **`tools/rename_strip_at_prefixes.sh`** (new): rename-in-place for the existing run's artifacts so the ~1 hr ESM2 compute is kept. See blocker section.
+- **`dbg_codify.py`** (new): committable single-complex codify smoke test (replaces the lost ad-hoc cluster version).
+- **`STATUS.md`**: this §15 update.
+
+### Feature-compute run results (clean)
+- Splits prepared: **7,359 train / 250 test** = 7,609 complexes (`prepare_bipspi_inputs.py` on `~/ESMFold-multimer/code/esmfold_multimer/data/{splits,structures}`).
+- zarr: **12,951 entries**, arrays `per_tok_embedding [L,1280]` + `mean_embedding [1280]`, keyed on `sha256(SEQRES)[:16]`.
+- After the SEQRES fallback: **13** `ESM2 embedding not found` (0.17%), **186** total skips (2.4%): 159 `BadNumberOfResidues` (legit too-short/long chains), 11 `IndexError`, 3 `EOFError` (truncated cache from a killed run), 1 `ValueError`. **97.6% retained** — comparable coverage to 07b RF.
+- Probe confirmed all 1,764 skipped pdbIds were present in `candidates.json` with chain-seq hash in the zarr (1764/1764) — i.e. no proteins are genuinely missing, purely a SEQRES-vs-ATOM key problem.
+
+### ⛔ BLOCKER: `@`-prefix codification collision
+After the `None` fix, codification still fails because **`prepare_bipspi_inputs.py` names complexes with chain-pair letters after `@`** (e.g. `4lvh@bc`, `4lac@ac`, `4lac@bc`), but BIPSPI uses `@` as a **"same-complex sampling variant" tag** and strips everything after it in **~15 places** (`grep -n 'split("@")\[0\]'`): notably `AbstractProtocol:79` (`raw_prefix`), `DataLoaderClass:69-70` (file lookup), `crossValidationSplitter:52,59` (CV fold grouping), `trainAndTest:316,342` + `processOneFold` (result averaging), `ComplexCodified:112` (sampling). Effects:
+- File lookup strips `4lvh@bc` → `4lvh`, but feature files are named `4lvh@bc_l_B_u_.esm2.tab.gz` → mismatch.
+- `4lac@ac` and `4lac@bc` both collapse to `4lac` → `more than 1 Contact map for 4lac` error, and would be wrongly averaged as one complex in eval.
+
+**Fix DECIDED + STAGED (2026-06-26, "fix script + rename artifacts"):** make each complex's base prefix unique and `@`-free (`4lvh@bc` → `4lvhbc`). The 4-char PDB-ID boundary guarantees no collisions (`4lac@ac`/`4lac@bc` → distinct `4lacac`/`4lacbc`). Two coordinated changes, both committable so the cluster gets them via `git pull`:
+1. **`tools/prepare_bipspi_inputs.py:make_prefix`** patched: `f"{pdb}@{chains}"` → `f"{pdb}{chains}"` (the `@` separator is gone). The script is now correct for all future prepare runs — no recurrence.
+2. **`tools/rename_strip_at_prefixes.sh`** (new) renames the *existing* run's artifacts in place to match, so the ~1 hr of ESM2 features is kept rather than recomputed. The transform is purely "delete the `@` char" — `@` appears nowhere in these names/contents except as the prefix separator, so stripping it lands exactly on the new scheme. Dry-run by default; `--apply` to act; refuses to clobber. It renames files+dirs under `pdbs/` and `wdir/computedFeatures/` (`find -depth`), strips `@` from `folds.json`/`manifest.json` (with `.bak`), and deletes stale `*.train.pkl.gz`/`*.predict.pkl.gz`.
+
+Validation driver **`dbg_codify.py`** (new, committable — the previous one was ad-hoc on the cluster and lost): `PYTHONPATH=. python dbg_codify.py --wdir ~/bipspi_run/esm2_splits/wdir 4lvhbc` → expects `SUCCESS` before any full relaunch (codify does NOT cache, so a failed full run wastes the whole encode).
+
+### Co-researcher guidance (2026-06-26) — confirms the integration approach
+BIPSPI's author (rsanchezgarc) provided reference links. They **validate our manager approach** and recommend one simplification:
+- Build the ESM manager modeled on `PsiBlastManager.py` (see `seqToolManager.py:30` base class, `PsiBlastManager.py:62,240`, `seqStructMapper.py` for seq→struct mapping). ✅ done as `Esm2Manager.py`.
+- Add import + instantiate in `seqFeatsComputer.py`. ✅ done.
+- **In `SeqProtocol.py`: comment out the classic-feature line `FEATURES_TO_INCLUDE_CHAIN` L15 (`predAsaAndSS`/SPIDER2) and replace with the ESM features directly** — i.e. edit the `FEATURES_TO_INCLUDE_CHAIN` list in place, rather than our parallel `FEATURES_TO_INCLUDE_CHAIN_ESM2` constant + `useEsm2/skipClassicFeatures` branching in `codifyOneComplex.py`. Our branching approach is functionally equivalent and already works; the next chat can keep it or simplify to the in-place edit per the author's pattern. Either way the `@`-collision blocker is orthogonal and must be fixed first.
+
+### Cluster resource notes (this session)
+- Node `haskell`: 512 CPU / ~503 G RAM. Node was ~190 G free, 428 CPU idle. QOS caps: `normal` = 128 CPU/user, `student` = 64 CPU/user. Partition `cpu` default 4 h, max 7 d, `OverSubscribe=FORCE:2` (CPU shareable, memory exclusive).
+- **`squeue`/`sacct`/`sinfo` live only on the login node `rust`, NOT on compute nodes** — diagnose job state from the run log + `top`/`free` on the compute node.
+- **ESM2 mode is memory-bound, not CPU-bound** (psiblast — the old CPU hog — is skipped; zarr reads are ms). `--ncpu` drives both parallelism AND peak codify RAM. Right-sized ask: `--cpus-per-task=16 --mem=64G`, but **codification OOM'd at 64 G near the end of stage-1** (~7,178 complexes). Relaunch needs **`--mem=192G`**. Set `--ncpu` == `--cpus-per-task` (never exceed allocation).
+- **Codification does NOT cache per-complex to disk** — a restart re-encodes from scratch (~same time), it does not resume. Feature computation DOES cache (`os.path.isfile` skip), so restarts there are cheap.
+- Terminal paste tip: long one-line commands wrap and break at the filename in this SSH/tmux setup. `cd` into the dir and use short relative paths, or use heredocs.
+
+### Immediate next steps for the new chat
+1. **Push** the staged changes (user pushes — see memory `git-push-is-users-job`): `SeqProtocol.py` `None` fix, `prepare_bipspi_inputs.py` `@`-free `make_prefix`, new `tools/rename_strip_at_prefixes.sh`, new `dbg_codify.py`, this STATUS.md.
+2. On cluster: `git pull`, then **dry-run then apply** the rename:
+   ```bash
+   bash tools/rename_strip_at_prefixes.sh ~/bipspi_run/esm2_splits            # inspect
+   bash tools/rename_strip_at_prefixes.sh ~/bipspi_run/esm2_splits --apply    # do it
+   ```
+3. Validate ONE complex: `PYTHONPATH=. python dbg_codify.py --wdir ~/bipspi_run/esm2_splits/wdir 4lvhbc` → expect `SUCCESS`. (Pick any real prefix from `folds.json` if `4lvhbc` isn't present.)
+4. Relaunch full pipeline with `--cpus-per-task=16 --mem=192G --time=6:00:00`, `--ncpu 16`, `tee` to a fresh log. Feature step skips (cached, renamed); codify → train → eval → **pair-AUROC table** is the deliverable (compare to 07b RF ~0.55).
