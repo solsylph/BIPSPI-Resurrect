@@ -497,8 +497,29 @@ First real Path-B run on the cluster (`haskell` node, `~/bipspi_run/esm2_splits/
 - **`SeqProtocol.py`: `FEATURES_TO_INCLUDE_PAIR_ESM2 = None`** (was `[]`). An empty list passes the `if not self.pairfeatsToInclude is None:` guard in `AbstractProtocol.applyProtocol:87` and then indexes `self.pairfeatsToInclude[0]` at `addPairFeatures:224` → `IndexError: list index out of range` on **every** complex → `0 train complexes loaded` → `UnboundLocalError: ppiComplex` in `trainAndTest.loadTrainingData:145`. `None` makes `addPairFeatures` be skipped. Fixes the *first* of two codification problems.
 - **`tools/prepare_bipspi_inputs.py`: `make_prefix` now `@`-free** (`f"{pdb}{chains}"`). Fixes the *second* (the `@`-collision blocker below).
 - **`tools/rename_strip_at_prefixes.sh`** (new): rename-in-place for the existing run's artifacts so the ~1 hr ESM2 compute is kept. See blocker section.
+- **`Esm2Manager.py`: add `seqStructMap.setCurrentSeq(seqStr, chainType, chainId)`** before the residue loop (the resId bug below). Without it, every resId is the bogus `<seqIx>?` fallback → codify join empties → "dataset is empty".
 - **`dbg_codify.py`** (new): committable single-complex codify smoke test (replaces the lost ad-hoc cluster version).
+- **`dbg_compute_feats.py`** (new): runs ONLY the feature-compute step (regenerate features in place, no codify), so we can re-validate before the full non-cached codify.
 - **`STATUS.md`**: this §15 update.
+
+### ⛔ BLOCKER 2 (RESOLVED in code): ESM2 resId bug → "dataset is empty"
+After the `@`-rename, codify reached `AbstractProtocol.applyProtocol` but every complex failed `assert allPairsCodified.shape[0]>1, "Error, <prefix> dataset is empty"` (`AbstractProtocol.py:94`). Root cause: `combinePairwiseAndSingleChainFeats` inner-joins the contact map against the single-chain feature files on `(chainId, resId, resName)`. The ESM2 files had **`resId` = `0?`, `1?`, `2?`...** (the `str(seqIx)+"?"` fallback at `Esm2Manager.py:201`) instead of real PDB residue numbers (`1`, `2`, `3` in the cMap), so the join matched 0 rows. (`resName` was fine — 1-letter in both.)
+
+The fallback fired because `seqStructMap.seqToStructIndex()` returned `None` for **every** residue: at `seqStructMapper.py:248` it does `self.seqToRefSeq[(chainType,chainId)]`, which raises `KeyError` (caught → `None`) unless `setCurrentSeq()` has registered that chain. **Every** classic single-chain manager (PsiBlast/Spider2/Al2co/HHblits/windowSeq) calls `seqStructMap.setCurrentSeq(seqStr, chainType, chainId)` right after `getSeq`; the ESM2 manager was the only one that didn't. Fix = add that one call (matches the proven pattern; does not touch the shared `seqToStructIndex`). Systematic — confirmed by 6/6 sampled prefixes failing identically.
+
+**Regeneration required:** the on-disk `esm2/*.esm2.tab.gz` have the wrong resIds baked in, and the manager's `os.path.isfile` short-circuit would keep them. Procedure (cluster, `protein` env, after `git pull`):
+```bash
+rm ~/bipspi_run/esm2_splits/wdir/computedFeatures/seqStep/esm2/*.esm2.tab.gz
+cd ~/BIPSPI-Resurrect/BIPSPI
+PYTHONPATH=. python dbg_compute_feats.py --modelType seq \
+    --pdbsIndir ~/bipspi_run/esm2_splits/pdbs \
+    --N_KFOLD  ~/bipspi_run/esm2_splits/folds.json \
+    --wdir     ~/bipspi_run/esm2_splits/wdir --ncpu 16   # only esm2 recomputes; rest cached
+# re-validate (now expect real resIds + SUCCESS):
+zcat ~/bipspi_run/esm2_splits/wdir/computedFeatures/seqStep/esm2/3wg7jl_l_*.esm2.tab.gz | cut -f1-3 | head
+PYTHONPATH=. python dbg_codify.py --wdir ~/bipspi_run/esm2_splits/wdir 3wg7jl
+```
+Only after `SUCCESS` (and the resId column showing `1,2,3...` not `0?,1?...`) launch the full `generateBIPSPIModel.py` run.
 
 ### Feature-compute run results (clean)
 - Splits prepared: **7,359 train / 250 test** = 7,609 complexes (`prepare_bipspi_inputs.py` on `~/ESMFold-multimer/code/esmfold_multimer/data/{splits,structures}`).
@@ -537,5 +558,6 @@ BIPSPI's author (rsanchezgarc) provided reference links. They **validate our man
    bash tools/rename_strip_at_prefixes.sh ~/bipspi_run/esm2_splits            # inspect
    bash tools/rename_strip_at_prefixes.sh ~/bipspi_run/esm2_splits --apply    # do it
    ```
-3. Validate ONE complex: `PYTHONPATH=. python dbg_codify.py --wdir ~/bipspi_run/esm2_splits/wdir 4lvhbc` → expect `SUCCESS`. (Pick any real prefix from `folds.json` if `4lvhbc` isn't present.)
-4. Relaunch full pipeline with `--cpus-per-task=16 --mem=192G --time=6:00:00`, `--ncpu 16`, `tee` to a fresh log. Feature step skips (cached, renamed); codify → train → eval → **pair-AUROC table** is the deliverable (compare to 07b RF ~0.55).
+3. **Regenerate ESM2 features** (resId bug — BLOCKER 2 above): `rm wdir/computedFeatures/seqStep/esm2/*.esm2.tab.gz`, then `PYTHONPATH=. python dbg_compute_feats.py ...` (only esm2 recomputes; rest cached). Confirm resId column is now `1,2,3...` not `0?,1?...`.
+4. Validate ONE complex: `PYTHONPATH=. python dbg_codify.py --wdir ~/bipspi_run/esm2_splits/wdir 3wg7jl` → expect `SUCCESS`. (Any real prefix from `folds.json` works.)
+5. Relaunch full pipeline with `--cpus-per-task=16 --mem=192G --time=6:00:00`, `--ncpu 16`, `tee` to a fresh log. Feature step skips (cached); codify → train → eval → **pair-AUROC table** is the deliverable (compare to 07b RF ~0.55).

@@ -182,6 +182,14 @@ class Esm2Manager(SeqToolManager):
 
     prefix, chainType, chainId = self.splitExtendedPrefix(prefixExtended)[:3]
     seqStr, _ = seqStructMap.getSeq(chainType, chainId)
+    # Mirror every classic single-chain manager (PsiBlast/Spider2/Al2co/HHblits/
+    # windowSeq): setCurrentSeq() registers this chain in seqStructMap.seqToRefSeq.
+    # Without it, seqToStructIndex() hits `seqToRefSeq[(chainType,chainId)]` ->
+    # KeyError -> returns None for EVERY residue, so resId falls back to the bogus
+    # "<seqIx>?" form and the codify inner-join on resId yields 0 rows ("dataset
+    # is empty"). Must be called with the seq straight from getSeq so it matches
+    # the stored seqsDict entry (identity mapping).
+    seqStructMap.setCurrentSeq(seqStr, chainType, chainId)
     seqStr = seqStr.strip()
 
     emb = self._lookupEmbedding(prefix, seqStr, prefixExtended)  # [len(seqStr), d]
