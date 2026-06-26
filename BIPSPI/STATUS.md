@@ -522,6 +522,12 @@ PYTHONPATH=. python dbg_codify.py --wdir ~/bipspi_run/esm2_splits/wdir 3wg7jl
 ```
 Only after `SUCCESS` (and the resId column showing `1,2,3...` not `0?,1?...`) launch the full `generateBIPSPIModel.py` run.
 
+### ⛔ BLOCKER 3 (RESOLVED): rename broke `_u.pdb` symlinks
+The regeneration run skipped **every** complex with `FileNotFoundError: .../pdbs/<prefix>_l_u.pdb`. Cause: `prepare_bipspi_inputs.py` creates `_u.pdb` as **relative symlinks** to `_b.pdb` (`os.symlink(src.name, dst)`). `mv` renames a symlink file but NOT its stored target string, so after the `@`-strip rename, `4lvhbc_l_u.pdb` still pointed at the old `4lvh@bc_l_b.pdb` → dangling. Fix = re-point the links (`ln -sfn <prefix>_l_b.pdb <prefix>_l_u.pdb`). `tools/rename_strip_at_prefixes.sh` now does this automatically (step "1b"); for the already-renamed run a one-off loop over `*_u.pdb` repointed them. After repointing, regeneration sees real pdbs and recomputes esm2.
+
+### ⛔ BLOCKER 4 (RESOLVED): `@`-removal broke ESM2 SEQRES-fallback pdbId lookup
+After repointing, regeneration ran but ~1844 complexes failed with `ESM2 embedding not found ... no candidate SEQRES sequence for pdbId 4lmsab aligned` — note the **wrong pdbId `4lmsab`** (should be `4lms`). `Esm2Manager._lookupEmbedding` extracted the pdbId for the SEQRES-candidate fallback via `prefix.split("@")[0]`, which **relied on the `@`** to separate the 4-char PDB code from the chain letters. With `@` gone, `"4lmsab".split("@")[0]` returns `"4lmsab"`, not a key in `candidates.json` (keyed by 4-char `4lms`), so the fallback found nothing and every ATOM≠SEQRES complex (the ones needing the fallback, incl. `3wg7jl`) failed; fast-path exact-hash hits still wrote esm2 files. Fix = `pdbId = prefix[:4].lower()` (correct for both naming schemes). Regenerate again: fast-path esm2 files are kept (correct resIds from the setCurrentSeq fix), only the previously-failed fallback complexes recompute.
+
 ### Feature-compute run results (clean)
 - Splits prepared: **7,359 train / 250 test** = 7,609 complexes (`prepare_bipspi_inputs.py` on `~/ESMFold-multimer/code/esmfold_multimer/data/{splits,structures}`).
 - zarr: **12,951 entries**, arrays `per_tok_embedding [L,1280]` + `mean_embedding [1280]`, keyed on `sha256(SEQRES)[:16]`.

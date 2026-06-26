@@ -64,6 +64,31 @@ done
 echo "  files/dirs to rename: $renamed   refused(clobber): $skipped"
 
 # ---------------------------------------------------------------------------
+# 1b. Re-point symlinks whose stored TARGET still contains '@'.  `mv` renames a
+#     symlink file but NOT its target string.  The _u.pdb files are relative
+#     symlinks to the _b.pdb files (prepare_bipspi_inputs.py: os.symlink(src.name,
+#     dst)), so after renaming both, 4lvhbc_l_u.pdb still points at the OLD
+#     4lvh@bc_l_b.pdb -> dangling -> FileNotFoundError at feature-compute time.
+#     Strip '@' from the target so it points at the renamed _b file.
+# ---------------------------------------------------------------------------
+relinked=0
+for base in "$RUN_DIR/pdbs" "$WDIR/computedFeatures"; do
+  [[ -d "$base" ]] || continue
+  while IFS= read -r -d '' link; do
+    tgt="$(readlink "$link")"
+    case "$tgt" in
+      *@*)
+        newtgt="${tgt//@/}"
+        say "relink '$link' -> '$newtgt' (was '$tgt')"
+        if [[ $APPLY -eq 1 ]]; then ln -sfn "$newtgt" "$link"; fi
+        relinked=$((relinked+1))
+        ;;
+    esac
+  done < <(find "$base" -type l -print0)
+done
+echo "  symlinks re-pointed: $relinked"
+
+# ---------------------------------------------------------------------------
 # 2. Rewrite JSON prefix lists (folds.json, manifest.json).  '@' only ever
 #    appears inside prefix strings, so a literal global delete is safe.
 # ---------------------------------------------------------------------------

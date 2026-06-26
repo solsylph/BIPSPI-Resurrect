@@ -138,7 +138,11 @@ class Esm2Manager(SeqToolManager):
       # hash collision-free but length disagrees: fall through to alignment
 
     # Fallback: align the candidate SEQRES embedding onto the ATOM residues.
-    pdbId = prefix.split("@")[0].lower()
+    # pdbId is the 4-char PDB code. Prefixes are now "<pdb><chains>" with no '@'
+    # separator (e.g. "4lmsab" -> pdbId "4lms"), so slice the first 4 chars
+    # rather than split on '@'. (prefix[:4] also yields the right code for the
+    # old "4lms@ab" form, so this is robust to both.)
+    pdbId = prefix[:4].lower()
     candidateSeqs = self._getCandidates().get(pdbId, [])
     best = None  # (nMapped, alignedEmb)
     seenHashes = set()
