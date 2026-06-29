@@ -69,6 +69,16 @@ def codifyStep(methodProtocol=None, feedbackPaths=None):
   if not benchCod.checkIfAllCodified():
   #  skipComplexesList= benchCod.prefixes[4:]
     skipComplexesList= []
+    # Escape hatch for complexes too large to codify within the mem cgroup: list
+    # their prefixes (one per line) in the file named by $BIPSPI_SKIP_COMPLEXES_FILE
+    # and they are excluded from codification (and thus train/eval). Used to get
+    # past per-complex OOMs when running with a tight --mem. Codify caches per
+    # complex, so restarts resume; this just lets a restart loop skip a culprit.
+    _skipFile= os.environ.get("BIPSPI_SKIP_COMPLEXES_FILE")
+    if _skipFile and os.path.isfile(os.path.expanduser(_skipFile)):
+      with open(os.path.expanduser(_skipFile)) as _f:
+        skipComplexesList= [ln.strip() for ln in _f if ln.strip() and not ln.startswith("#")]
+      print("Loaded %d complexes to skip from %s: %s"%(len(skipComplexesList), _skipFile, skipComplexesList))
     codifiedPath= benchCod.codifyAll( skipComplexesList=skipComplexesList, samplingFold= 3)
   else:
     codifiedPath= benchCod.getCodifiedPath()

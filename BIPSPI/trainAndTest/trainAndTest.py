@@ -98,8 +98,8 @@ class TrainAndTestWorker(Configuration):
       paralVerbose= 1 
       
     readingNThreads= self.numProc
-    if self.numProc > 12:
-      readingNThreads= 12
+    if self.numProc > 30:
+      readingNThreads= 30
     if sharedMemoryPath:
       import SharedArray as sa
       try:
